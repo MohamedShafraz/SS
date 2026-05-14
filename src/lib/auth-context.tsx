@@ -27,19 +27,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  // Check for existing token on mount
+  // Check for existing user on mount
   useEffect(() => {
-    const storedToken = localStorage.getItem("auth_token");
     const storedUser = localStorage.getItem("auth_user");
 
-    if (storedToken && storedUser) {
+    if (storedUser) {
       try {
         const parsedUser = JSON.parse(storedUser);
-        setToken(storedToken);
         setUser(parsedUser);
+        setToken("authenticated"); // Cookie handles actual token
       } catch (error) {
         console.error("Error parsing stored user:", error);
-        localStorage.removeItem("auth_token");
         localStorage.removeItem("auth_user");
       }
     }
@@ -64,10 +62,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       setToken(data.token);
       setUser(data.user);
-      localStorage.setItem("auth_token", data.token);
       localStorage.setItem("auth_user", JSON.stringify(data.user));
 
-      router.push("/dashboard");
+      setTimeout(() => {
+        router.push("/dashboard");
+      }, 100);
     } catch (error) {
       console.error("Login error:", error);
       throw error;
@@ -79,8 +78,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     setUser(null);
     setToken(null);
-    localStorage.removeItem("auth_token");
     localStorage.removeItem("auth_user");
+    
+    // Clear auth cookie
+    document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC;";
+    
     router.push("/login");
   };
 

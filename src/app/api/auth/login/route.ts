@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
       { expiresIn: "24h" }
     );
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         token,
         user: {
@@ -75,15 +75,19 @@ export async function POST(request: NextRequest) {
       },
       { status: 200 }
     );
+
+    // Set token as HTTP-only cookie
+    response.cookies.set("auth_token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24,
+      path: "/",
+    });
+
+    return response;
   } catch (error: any) {
     console.error("Login error:", error);
-    if (error?.code === "PGRST116") {
-      // User not found
-      return NextResponse.json(
-        { message: "Invalid email or password" },
-        { status: 401 }
-      );
-    }
     return NextResponse.json(
       { message: "Internal server error" },
       { status: 500 }
