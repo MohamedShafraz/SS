@@ -347,9 +347,9 @@ export default function Dashboard() {
                     <div className={`p-3 rounded-lg ${metric.color}`}>
                       <Icon className={`w-6 h-6 ${metric.textColor}`} />
                     </div>
-                    <span className="text-green-600 text-sm font-semibold">
+                    {/* <span className="text-green-600 text-sm font-semibold">
                       {metric.change}
-                    </span>
+                    </span> */}
                   </div>
                   <h3 className="text-gray-600 text-sm font-medium mb-1">
                     {metric.title}
