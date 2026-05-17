@@ -10,21 +10,30 @@ export function middleware(request: NextRequest) {
   const token = request.cookies.get("auth_token")?.value;
   const pathname = request.nextUrl.pathname;
 
+  // Allow login page without authentication
+  if (pathname === "/login" || pathname === "/") {
+    return NextResponse.next();
+  }
+
   // Check if the route is protected
   const isProtectedRoute = protectedRoutes.some((route) =>
     pathname.startsWith(route)
   );
 
-  if (isProtectedRoute && !token) {
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
+  if (isProtectedRoute) {
+    // No token - redirect to login
+    if (!token) {
+      return NextResponse.redirect(new URL("/login", request.url));
+    }
 
-  // Verify token if it exists
-  if (token) {
+    // Token exists - verify it
     try {
       jwt.verify(token, JWT_SECRET);
+      // Token is valid, allow access
+      return NextResponse.next();
     } catch (error) {
       // Token is invalid or expired
+      console.log(`[Middleware] Invalid/expired token for ${pathname}, redirecting to login`);
       const response = NextResponse.redirect(new URL("/login", request.url));
       response.cookies.delete("auth_token");
       return response;
@@ -36,13 +45,14 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public folder
-     */
-    "/((?!_next/static|_next/image|favicon.ico|public).*)",
+    // Explicitly protect these routes
+    "/dashboard/:path*",
+    "/pos/:path*",
+    "/products/:path*",
+    "/transactions/:path*",
+    "/settings/:path*",
+    // Also match root and login (so we can allow them)
+    "/",
+    "/login",
   ],
 };

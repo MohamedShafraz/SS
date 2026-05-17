@@ -48,7 +48,7 @@ export default function LoginPage() {
               <LogIn className="w-8 h-8 text-blue-600" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">POS System</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Sports Shop POS</h1>
           <p className="text-gray-600 mt-2">Sign in to your account</p>
         </div>
 

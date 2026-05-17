@@ -16,13 +16,17 @@ import { useAuth } from "@/lib/auth-context";
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
+  const { user } = useAuth();
 
   const menuItems = [
     { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
     { href: "/pos", label: "POS System", icon: ShoppingCart },
     { href: "/products", label: "Products", icon: Package },
     { href: "/transactions", label: "Transactions", icon: ShoppingCart },
-    { href: "/settings", label: "Settings", icon: Settings },
+    //authcontext check for admin role before showing settings
+    ...(user?.role === "admin"
+      ? [{ href: "/settings", label: "Settings", icon: Settings }]
+      : []),
   ];
 
   return (

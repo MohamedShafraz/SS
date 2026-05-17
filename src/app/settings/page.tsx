@@ -9,7 +9,7 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState({
     shopName: "Sports Shop",
     address: "123 Main Street, City",
-    phone: "+91 98765 43210",
+    phone: "+94 77 712 3456",
     email: "info@sportsshop.com",
     taxRate: 5,
     currency: "/=",
