@@ -17,14 +17,19 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
+  isDemoMode: boolean;
+  setDemoMode: (isDemo: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export { AuthContext };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isDemoMode, setDemoMode] = useState(false);
   const router = useRouter();
 
   // Check for existing user on mount
@@ -94,6 +99,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         login,
         logout,
+        isDemoMode,
+        setDemoMode,
         isAuthenticated: !!user && !!token,
       }}
     >

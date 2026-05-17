@@ -66,9 +66,12 @@ export default function ProductsPage() {
   };
 
   const filteredProducts = products.filter((product) => {
-    const matchesSearch = product.name
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase());
+    const searchLower = searchTerm.toLowerCase();
+    const matchesSearch = 
+      product.name.toLowerCase().includes(searchLower) ||
+      product.barcode.toLowerCase().includes(searchLower) ||
+      product.sku.toLowerCase().includes(searchLower) ||
+      product.category.toLowerCase().includes(searchLower);
     const matchesCategory =
       categoryFilter === "all" || product.category === categoryFilter;
     return matchesSearch && matchesCategory;
@@ -107,7 +110,7 @@ export default function ProductsPage() {
             category: formData.category,
             price: formData.price,
             cost: formData.cost,
-            quantity: formData.quantity || 0,
+            quantity: Math.max(0, formData.quantity || 0),
             image_url: formData.image_url,
             barcode: formData.barcode,
             sku: formData.sku,
@@ -129,7 +132,7 @@ export default function ProductsPage() {
             category: formData.category,
             price: formData.price,
             cost: formData.cost,
-            quantity: formData.quantity || 0,
+            quantity: Math.max(0, formData.quantity || 0),
             image_url: formData.image_url,
             barcode: formData.barcode || `BCD-${Date.now()}`,
             sku: formData.sku || `SKU-${Date.now()}`,
@@ -435,11 +438,12 @@ export default function ProductsPage() {
                   </label>
                   <input
                     type="number"
+                    min={0}
                     value={formData.quantity || ""}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        quantity: parseInt(e.target.value),
+                        quantity: Math.max(0, parseInt(e.target.value) || 0),
                       })
                     }
                     className="input-base"

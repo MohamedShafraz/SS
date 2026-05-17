@@ -132,7 +132,6 @@ export default function TransactionsPage() {
               <option value="all">All Payment Methods</option>
               <option value="Cash">Cash</option>
               <option value="Card">Card</option>
-              <option value="UPI">UPI</option>
               <option value="Check">Check</option>
             </select>
           </div>

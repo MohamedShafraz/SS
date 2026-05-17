@@ -1,7 +1,7 @@
 "use client";
 
 import { MainLayout } from "@/components/layout";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useContext } from "react";
 import {
   LineChart,
   Line,
@@ -24,8 +24,29 @@ import {
   ShoppingCart,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { AuthContext } from "@/lib/auth-context";
+
+// Demo data
+const DEMO_PRODUCTS = [
+  { id: "1", name: "Sports Shoes - Red", category: "Sports Shoes", price: 5000, cost: 2500, quantity: 15, image_url: "", barcode: "001" },
+  { id: "2", name: "School Shoes - Black", category: "School Shoes", price: 3500, cost: 1500, quantity: 25, image_url: "", barcode: "002" },
+  { id: "3", name: "Travel Bag - Blue", category: "Travel Bags", price: 4000, cost: 1800, quantity: 10, image_url: "", barcode: "003" },
+  { id: "4", name: "School Bag - Green", category: "School Bags", price: 3000, cost: 1200, quantity: 20, image_url: "", barcode: "004" },
+];
+
+const DEMO_TRANSACTIONS = [
+  { id: "t1", transaction_date: new Date().toISOString().split('T')[0], total_amount: 8500, discount_amount: 500, tax_amount: 0, payment_method: "cash" },
+  { id: "t2", transaction_date: new Date().toISOString().split('T')[0], total_amount: 6500, discount_amount: 0, tax_amount: 0, payment_method: "cash" },
+];
+
+const DEMO_TRANSACTION_ITEMS = [
+  { id: "1", transaction_id: "t1", product_id: "1", quantity: 1, unit_price: 5000, discount: 500, subtotal: 4500 },
+  { id: "2", transaction_id: "t1", product_id: "2", quantity: 1, unit_price: 3500, discount: 0, subtotal: 3500 },
+  { id: "3", transaction_id: "t2", product_id: "3", quantity: 1, unit_price: 4000, discount: 0, subtotal: 4000 },
+];
 
 export default function Dashboard() {
+  const authContext = useContext(AuthContext);
   const [dateFilter, setDateFilter] = useState("today");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [products, setProducts] = useState<any[]>([]);
@@ -41,6 +62,14 @@ export default function Dashboard() {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
+
+      // If not authenticated, use demo data
+      if (!authContext?.isAuthenticated) {
+        setProducts(DEMO_PRODUCTS);
+        setTransactions(DEMO_TRANSACTIONS);
+        setTransactionItems(DEMO_TRANSACTION_ITEMS);
+        return;
+      }
       
       // Fetch all products
       const { data: productsData, error: productsError } = await supabase

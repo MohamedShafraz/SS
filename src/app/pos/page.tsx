@@ -13,6 +13,7 @@ interface CartItem {
   quantity: number;
   image_url: string;
   discount: number;
+  discountType: "lkr" | "percentage"; // LKR or percentage
 }
 
 interface Product {
@@ -30,9 +31,11 @@ interface Product {
 export default function POSPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [barcodeInput, setBarcodeInput] = useState("");
   const [discount, setDiscount] = useState(0);
+  const [discountType, setDiscountType] = useState<"lkr" | "percentage">("lkr");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
@@ -56,13 +59,36 @@ export default function POSPage() {
         return;
       }
 
-      setProducts(data || []);
+      const productsData = data || [];
+      setProducts(productsData);
+      setFilteredProducts(productsData);
     } catch (error) {
       console.error("Error:", error);
       toast.error("Error loading products");
     } finally {
       setLoading(false);
     }
+  };
+
+  // Filter products based on search input
+  const handleSearchFilter = (searchText: string) => {
+    setBarcodeInput(searchText);
+
+    if (!searchText.trim()) {
+      setFilteredProducts(products);
+      return;
+    }
+
+    const searchLower = searchText.toLowerCase();
+    const filtered = products.filter(
+      (product) =>
+        product.barcode.toLowerCase().includes(searchLower) ||
+        product.name.toLowerCase().includes(searchLower) ||
+        product.sku.toLowerCase().includes(searchLower) ||
+        product.category.toLowerCase().includes(searchLower)
+    );
+
+    setFilteredProducts(filtered);
   };
 
   useEffect(() => {
@@ -72,25 +98,46 @@ export default function POSPage() {
 
   const handleBarcodeInput = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
-      const product = products.find((p) => p.barcode === barcodeInput);
+      const searchLower = barcodeInput.toLowerCase();
+      
+      // Try exact barcode match first
+      let product = products.find((p) => p.barcode.toLowerCase() === searchLower);
+      
+      // If not found by barcode, try by name
+      if (!product) {
+        product = products.find((p) => p.name.toLowerCase().includes(searchLower));
+      }
+
       if (product) {
         addToCart(product);
         toast.success(`Added ${product.name}`);
+        setBarcodeInput("");
+        setFilteredProducts(products);
       } else {
         toast.error("Product not found");
       }
-      setBarcodeInput("");
     }
   };
 
   const addToCart = (product: Product) => {
+    // Prevent adding more than available stock
+    const existingInCart = cart.find((c) => c.id === product.id);
+    const currentQtyInCart = existingInCart ? existingInCart.quantity : 0;
+    if (product.quantity - currentQtyInCart <= 0) {
+      toast.error("Product out of stock");
+      return;
+    }
+
     setCart((prevCart) => {
       const existingItem = prevCart.find((item) => item.id === product.id);
       if (existingItem) {
+        const newQty = Math.min(product.quantity, existingItem.quantity + 1);
+        if (existingItem.quantity >= product.quantity) {
+          toast.error("Reached available stock");
+          return prevCart;
+        }
         return prevCart.map((item) =>
-          item.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
+          item.id === product.id ? { ...item, quantity: newQty } : item
         );
       }
       return [
@@ -102,6 +149,7 @@ export default function POSPage() {
           quantity: 1,
           image_url: product.image_url,
           discount: 0,
+          discountType: "lkr",
         },
       ];
     });
@@ -110,20 +158,66 @@ export default function POSPage() {
   const updateQuantity = (id: string, quantity: number) => {
     if (quantity <= 0) {
       removeFromCart(id);
-    } else {
-      setCart((prevCart) =>
-        prevCart.map((item) =>
-          item.id === id ? { ...item, quantity } : item
-        )
-      );
+      return;
     }
+
+    // enforce max based on product stock
+    const product = products.find((p) => p.id === id);
+    const maxQty = product ? product.quantity : Infinity;
+    let validQty = quantity;
+    if (quantity > maxQty) {
+      toast.error(`Only ${maxQty} in stock`);
+      validQty = maxQty;
+    }
+
+    setCart((prevCart) =>
+      prevCart.map((item) =>
+        item.id === id ? { ...item, quantity: validQty } : item
+      )
+    );
   };
 
   const updateDiscount = (id: string, discount: number) => {
     setCart((prevCart) =>
-      prevCart.map((item) =>
-        item.id === id ? { ...item, discount } : item
-      )
+      prevCart.map((item) => {
+        if (item.id !== id) return item;
+
+        const itemTotal = item.price * item.quantity;
+        let validDiscount = Math.max(0, discount);
+
+        // Validate based on discount type
+        if (item.discountType === "percentage") {
+          // Percentage discount can't be >= 100
+          validDiscount = Math.min(99.99, validDiscount);
+        } else {
+          // LKR discount can't exceed item total
+          validDiscount = Math.min(itemTotal, validDiscount);
+        }
+
+        return { ...item, discount: validDiscount };
+      })
+    );
+  };
+
+  const updateDiscountType = (id: string, type: "lkr" | "percentage") => {
+    setCart((prevCart) =>
+      prevCart.map((item) => {
+        if (item.id !== id) return item;
+
+        const itemTotal = item.price * item.quantity;
+        let validDiscount = item.discount;
+
+        // Validate discount for the new type
+        if (type === "percentage") {
+          // If switching to percentage, ensure it's < 100
+          validDiscount = Math.min(99.99, validDiscount);
+        } else {
+          // If switching to LKR, ensure it doesn't exceed item total
+          validDiscount = Math.min(itemTotal, validDiscount);
+        }
+
+        return { ...item, discountType: type, discount: validDiscount };
+      })
     );
   };
 
@@ -132,16 +226,41 @@ export default function POSPage() {
   };
 
   const calculateTotals = () => {
-    const subtotal = cart.reduce(
-      (sum, item) => sum + item.price * item.quantity - item.discount,
-      0
-    );
-    const tax = Math.round(subtotal * 0.05); // 5% tax
-    const total = subtotal + tax - discount;
-    return { subtotal, tax, total };
+    let subtotal = 0;
+
+    // Calculate subtotal with individual item discounts (robust to bad input)
+    cart.forEach((item) => {
+      const itemTotal = Number(item.price || 0) * Number(item.quantity || 0);
+      const rawDiscount = Number(item.discount ?? 0);
+      let itemDiscount = 0;
+
+      if (item.discountType === "percentage") {
+        const pct = isFinite(rawDiscount) ? rawDiscount : 0;
+        itemDiscount = (itemTotal * pct) / 100;
+      } else {
+        const lkr = isFinite(rawDiscount) ? rawDiscount : 0;
+        itemDiscount = Math.min(itemTotal, lkr);
+      }
+
+      subtotal += Math.max(0, itemTotal - itemDiscount);
+    });
+
+    // Apply global discount safely
+    const rawGlobal = Number(discount ?? 0);
+    let globalDiscount = 0;
+    if (discountType === "percentage") {
+      const pct = isFinite(rawGlobal) ? rawGlobal : 0;
+      globalDiscount = Math.min(subtotal, (subtotal * pct) / 100);
+    } else {
+      const lkr = isFinite(rawGlobal) ? rawGlobal : 0;
+      globalDiscount = Math.min(subtotal, lkr);
+    }
+
+    const total = Math.max(0, subtotal - globalDiscount);
+    return { subtotal, globalDiscount, total };
   };
 
-  const { subtotal, tax, total } = calculateTotals();
+  const { subtotal, globalDiscount, total } = calculateTotals();
 
   const handleCheckout = async () => {
     if (cart.length === 0) {
@@ -157,8 +276,8 @@ export default function POSPage() {
           {
             transaction_date: new Date().toISOString().split('T')[0],
             total_amount: total,
-            discount_amount: discount,
-            tax_amount: tax,
+            discount_amount: globalDiscount,
+            tax_amount: 0,
             payment_method: paymentMethod,
           },
         ])
@@ -173,14 +292,25 @@ export default function POSPage() {
       // Save transaction items
       if (transactionData && transactionData.length > 0) {
         const transactionId = transactionData[0].id;
-        const items = cart.map((item) => ({
-          transaction_id: transactionId,
-          product_id: item.id,
-          quantity: item.quantity,
-          unit_price: item.price,
-          discount: item.discount,
-          subtotal: item.price * item.quantity - item.discount,
-        }));
+        const items = cart.map((item) => {
+          const itemTotal = item.price * item.quantity;
+          let itemDiscount = 0;
+          
+          if (item.discountType === "percentage") {
+            itemDiscount = (itemTotal * item.discount) / 100;
+          } else {
+            itemDiscount = item.discount;
+          }
+          
+          return {
+            transaction_id: transactionId,
+            product_id: item.id,
+            quantity: item.quantity,
+            unit_price: item.price,
+            discount: itemDiscount,
+            subtotal: itemTotal - itemDiscount,
+          };
+        });
 
         const { error: itemsError } = await supabase
           .from("transaction_items")
@@ -215,6 +345,7 @@ export default function POSPage() {
       toast.success(`Order completed! Total: ${total}/=`);
       setCart([]);
       setDiscount(0);
+      setDiscountType("lkr");
       barcodeInputRef.current?.focus();
     } catch (error) {
       console.error("Error:", error);
@@ -241,7 +372,7 @@ export default function POSPage() {
                 type="text"
                 placeholder="Scan barcode or search..."
                 value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
+                onChange={(e) => handleSearchFilter(e.target.value)}
                 onKeyPress={handleBarcodeInput}
                 className="input-base flex-1"
               />
@@ -257,16 +388,23 @@ export default function POSPage() {
               <div className="flex items-center justify-center h-full">
                 <p className="text-gray-600">Loading products...</p>
               </div>
-            ) : products.length === 0 ? (
+            ) : products.length === 0? (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center">
                   <p className="text-gray-600 mb-2">No products available</p>
                   <p className="text-sm text-gray-500">Add products from the Products page</p>
                 </div>
               </div>
+            ) : filteredProducts.length === 0 ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center">
+                  <p className="text-gray-600 mb-2">No products found</p>
+                  <p className="text-sm text-gray-500">Try a different search term</p>
+                </div>
+              </div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {products.map((product) => (
+                {filteredProducts.map((product) => (
                   <div
                     key={product.id}
                     className="card-hover p-3 text-left relative group rounded-lg bg-white shadow-md hover:shadow-lg transition-shadow"
@@ -351,17 +489,55 @@ export default function POSPage() {
                           className="w-12 px-2 py-1 border border-gray-300 rounded text-sm"
                         />
                       </div>
-                      <input
-                        type="number"
-                        placeholder="Discount"
-                        value={item.discount}
-                        onChange={(e) =>
-                          updateDiscount(item.id, parseInt(e.target.value))
-                        }
-                        className="w-full px-2 py-1 border border-gray-300 rounded text-sm mb-2"
-                      />
+                      <div className="flex gap-2 mb-2">
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          value={item.discount ?? 0}
+                          onChange={(e) => {
+                            const val = e.target.value === "" ? 0 : parseInt(e.target.value) || 0;
+                            const itemTotal = item.price * item.quantity;
+                            let validDiscount = Math.max(0, val);
+
+                            // Validate based on discount type
+                            if (item.discountType === "percentage") {
+                              // Percentage discount can't be >= 100
+                              validDiscount = Math.min(99.99, validDiscount);
+                            } else {
+                              // LKR discount can't exceed item total
+                              validDiscount = Math.min(itemTotal, validDiscount);
+                            }
+
+                            updateDiscount(item.id, validDiscount);
+                          }}
+                          className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <select
+                          value={item.discountType}
+                          onChange={(e) =>
+                            updateDiscountType(item.id, e.target.value as "lkr" | "percentage")
+                          }
+                          className="px-2 py-1 border border-gray-300 rounded text-sm bg-white min-w-fit"
+                        >
+                          <option value="lkr">/=</option>
+                          <option value="percentage">%</option>
+                        </select>
+                      </div>
                       <p className="text-sm font-semibold text-gray-900">
-                        Subtotal: {item.price * item.quantity - item.discount}/=
+                        Subtotal: {(() => {
+                          const itemTotal = Number(item.price || 0) * Number(item.quantity || 0);
+                          const rawDiscount = Number(item.discount ?? 0);
+                          let itemDiscount = 0;
+                          if (item.discountType === "percentage") {
+                            const pct = isFinite(rawDiscount) ? rawDiscount : 0;
+                            itemDiscount = (itemTotal * pct) / 100;
+                          } else {
+                            const lkr = isFinite(rawDiscount) ? rawDiscount : 0;
+                            itemDiscount = Math.min(itemTotal, lkr);
+                          }
+                          return Math.max(0, itemTotal - itemDiscount);
+                        })()}/=
                       </p>
                     </div>
                   ))}
@@ -375,24 +551,61 @@ export default function POSPage() {
             <div className="space-y-2 mb-4">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Subtotal:</span>
-                <span className="font-medium">{subtotal}/=</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Tax (5%):</span>
-                <span className="font-medium">{tax}/=</span>
+                <span className="font-medium">{Math.round(subtotal)}/=</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">Discount:</span>
-                <input
-                  type="number"
-                  value={discount}
-                  onChange={(e) => setDiscount(parseInt(e.target.value) || 0)}
-                  className="w-24 px-2 py-1 border border-gray-300 rounded text-sm"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={discount ?? 0}
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? 0 : parseInt(e.target.value) || 0;
+                      let validDiscount = Math.max(0, val);
+
+                      // Validate based on discount type
+                      if (discountType === "percentage") {
+                        // Percentage discount can't be >= 100
+                        validDiscount = Math.min(99.99, validDiscount);
+                      } else {
+                        // LKR discount can't exceed subtotal
+                        validDiscount = Math.min(subtotal, validDiscount);
+                      }
+
+                      setDiscount(validDiscount);
+                    }}
+                    className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
+                  />
+                  <select
+                    value={discountType}
+                    onChange={(e) => {
+                      const newType = e.target.value as "lkr" | "percentage";
+                      let validDiscount = discount;
+
+                      // Validate discount for the new type
+                      if (newType === "percentage") {
+                        // If switching to percentage, ensure it's < 100
+                        validDiscount = Math.min(99.99, validDiscount);
+                      } else {
+                        // If switching to LKR, ensure it doesn't exceed subtotal
+                        validDiscount = Math.min(subtotal, validDiscount);
+                      }
+
+                      setDiscountType(newType);
+                      setDiscount(validDiscount);
+                    }}
+                    className="px-2 py-1 border border-gray-300 rounded text-sm bg-white min-w-fit"
+                  >
+                    <option value="lkr">/=</option>
+                    <option value="percentage">%</option>
+                  </select>
+                </div>
               </div>
               <div className="border-t-2 pt-2 flex justify-between">
                 <span className="font-bold text-gray-900">Total:</span>
-                <span className="text-2xl font-bold text-blue-600">{total}/=</span>
+                <span className="text-2xl font-bold text-blue-600">{Math.round(total)}/=</span>
               </div>
             </div>
 
@@ -408,7 +621,6 @@ export default function POSPage() {
               >
                 <option value="cash">Cash</option>
                 <option value="card">Card</option>
-                <option value="upi">UPI</option>
                 <option value="check">Check</option>
               </select>
             </div>
@@ -433,6 +645,7 @@ export default function POSPage() {
                 onClick={() => {
                   setCart([]);
                   setDiscount(0);
+                  setDiscountType("lkr");
                 }}
                 className="btn-secondary flex-1 flex items-center justify-center gap-2"
               >
