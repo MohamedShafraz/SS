@@ -149,9 +149,9 @@ export default function TransactionsPage() {
                   <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
                     Date & Time
                   </th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  {/* <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
                     Items
-                  </th>
+                  </th> */}
                   <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
                     Amount
                   </th>
@@ -188,10 +188,10 @@ export default function TransactionsPage() {
                       <td className="px-6 py-4 text-sm text-gray-600">
                         <p>{transaction.transaction_date}</p>
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-600">
+                      {/* <td className="px-6 py-4 text-sm text-gray-600">
                         {transaction.items?.length || 0} item
                         {(transaction.items?.length || 0) > 1 ? "s" : ""}
-                      </td>
+                      </td> */}
                       <td className="px-6 py-4">
                         <p className="font-semibold text-gray-900">
                           {transaction.total_amount}/=
