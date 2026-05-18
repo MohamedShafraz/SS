@@ -28,7 +28,20 @@ export function middleware(request: NextRequest) {
 
     // Token exists - verify it
     try {
-      jwt.verify(token, JWT_SECRET);
+      const decoded = jwt.verify(token, JWT_SECRET) as { role?: string };
+
+      // Cashier can only access dashboard and POS routes
+      if (decoded?.role === "cashier") {
+        const cashierAllowed = ["/pos"];
+        const isCashierAllowed = cashierAllowed.some((route) =>
+          pathname.startsWith(route)
+        );
+
+        if (!isCashierAllowed) {
+          return NextResponse.redirect(new URL("/pos", request.url));
+        }
+      }
+
       // Token is valid, allow access
       return NextResponse.next();
     } catch (error) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   Package,
@@ -10,7 +10,7 @@ import {
   X,
   LogOut,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
 
 export function Sidebar() {
@@ -18,16 +18,20 @@ export function Sidebar() {
   const pathname = usePathname();
   const { user } = useAuth();
 
-  const menuItems = [
-    { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
-    { href: "/pos", label: "POS System", icon: ShoppingCart },
-    { href: "/products", label: "Products", icon: Package },
-    { href: "/transactions", label: "Transactions", icon: ShoppingCart },
-    //authcontext check for admin role before showing settings
-    ...(user?.role === "admin"
-      ? [{ href: "/settings", label: "Settings", icon: Settings }]
-      : []),
-  ];
+  const menuItems =
+    user?.role === "cashier"
+      ? [
+          { href: "/pos", label: "POS System", icon: ShoppingCart },
+        ]
+      : [
+          { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
+          { href: "/pos", label: "POS System", icon: ShoppingCart },
+          { href: "/products", label: "Products", icon: Package },
+          { href: "/transactions", label: "Transactions", icon: ShoppingCart },
+          ...(user?.role === "admin"
+            ? [{ href: "/settings", label: "Settings", icon: Settings }]
+            : []),
+        ];
 
   return (
     <>
@@ -88,10 +92,20 @@ export function Sidebar() {
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
+  const pathname = usePathname();
+  const router = useRouter();
+
+  // Client-side guard: ensure cashier can't access non-POS routes
+  useEffect(() => {
+    if (!user) return;
+    if (user.role === "cashier" && !pathname.startsWith("/pos")) {
+      router.push("/pos");
+    }
+  }, [user, pathname, router]);
 
   return (
     <div className="flex min-h-screen bg-gray-50">
-      <Sidebar />
+      {user?.role !== "cashier" && <Sidebar />}
       <main className="flex-1 flex flex-col lg:ml-0">
         {/* Top bar with user info and logout */}
         {user && (

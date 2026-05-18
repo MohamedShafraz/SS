@@ -70,7 +70,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem("auth_user", JSON.stringify(data.user));
 
       setTimeout(() => {
-        router.push("/dashboard");
+        if (data.user?.role === "cashier") {
+          router.push("/pos");
+        } else {
+          router.push("/dashboard");
+        }
       }, 100);
     } catch (error) {
       console.error("Login error:", error);
