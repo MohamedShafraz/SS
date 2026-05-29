@@ -347,6 +347,9 @@ export default function POSPage() {
       setDiscount(0);
       setDiscountType("lkr");
       barcodeInputRef.current?.focus();
+
+      // Trigger print after successful checkout
+      handlePrint();
     } catch (error) {
       console.error("Error:", error);
       toast.error("Error processing checkout");

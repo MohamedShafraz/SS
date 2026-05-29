@@ -36,13 +36,11 @@ const DEMO_PRODUCTS = [
 
 const DEMO_TRANSACTIONS = [
   { id: "t1", transaction_date: new Date().toISOString().split('T')[0], total_amount: 8500, discount_amount: 500, tax_amount: 0, payment_method: "cash" },
-  { id: "t2", transaction_date: new Date().toISOString().split('T')[0], total_amount: 6500, discount_amount: 0, tax_amount: 0, payment_method: "cash" },
 ];
 
 const DEMO_TRANSACTION_ITEMS = [
   { id: "1", transaction_id: "t1", product_id: "1", quantity: 1, unit_price: 5000, discount: 500, subtotal: 4500 },
   { id: "2", transaction_id: "t1", product_id: "2", quantity: 1, unit_price: 3500, discount: 0, subtotal: 3500 },
-  { id: "3", transaction_id: "t2", product_id: "3", quantity: 1, unit_price: 4000, discount: 0, subtotal: 4000 },
 ];
 
 export default function Dashboard() {
@@ -63,11 +61,21 @@ export default function Dashboard() {
     try {
       setLoading(true);
 
-      // If not authenticated, use demo data
+      // If not authenticated, use demo data and fetch only user_id = NULL transactions
       if (!authContext?.isAuthenticated) {
         setProducts(DEMO_PRODUCTS);
-        setTransactions(DEMO_TRANSACTIONS);
         setTransactionItems(DEMO_TRANSACTION_ITEMS);
+        
+        // Fetch only transactions where user_id is NULL
+        const { data: transactionsData, error: transactionsError } = await supabase
+          .from("transactions")
+          .select("*")
+          .is("user_id", null)
+          .order("transaction_date", { ascending: false });
+
+        if (!transactionsError) {
+          setTransactions(transactionsData || []);
+        }
         return;
       }
       
@@ -80,7 +88,7 @@ export default function Dashboard() {
         setProducts(productsData || []);
       }
 
-      // Fetch transactions
+      // Fetch all transactions (for authenticated users)
       const { data: transactionsData, error: transactionsError } = await supabase
         .from("transactions")
         .select("*")
@@ -329,34 +337,36 @@ export default function Dashboard() {
             <p className="text-gray-600">Sales, profit, and inventory overview</p>
           </div>
 
-          {/* Filters */}
-          <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
-            <select
-              value={dateFilter}
-              onChange={(e) => setDateFilter(e.target.value)}
-              className="input-base"
-            >
-              <option value="today">Today</option>
-              <option value="week">This Week</option>
-              <option value="month">This Month</option>
-              <option value="year">This Year</option>
-            </select>
+          {/* Filters - Only show for authenticated users */}
+          {authContext?.isAuthenticated && (
+            <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
+              <select
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value)}
+                className="input-base"
+              >
+                <option value="today">Today</option>
+                <option value="week">This Week</option>
+                <option value="month">This Month</option>
+                <option value="year">This Year</option>
+              </select>
 
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="input-base"
-            >
-              <option value="all">All Categories</option>
-              <option value="Sports Shoes">Sports Shoes</option>
-              <option value="School Shoes">School Shoes</option>
-              <option value="Travel Bags">Travel Bags</option>
-              <option value="School Bags">School Bags</option>
-              <option value="Slippers">Slippers</option>
-              <option value="Sandals">Sandals</option>
-              <option value="Belts">Belts</option>
-            </select>
-          </div>
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="input-base"
+              >
+                <option value="all">All Categories</option>
+                <option value="Sports Shoes">Sports Shoes</option>
+                <option value="School Shoes">School Shoes</option>
+                <option value="Travel Bags">Travel Bags</option>
+                <option value="School Bags">School Bags</option>
+                <option value="Slippers">Slippers</option>
+                <option value="Sandals">Sandals</option>
+                <option value="Belts">Belts</option>
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Metrics Cards */}

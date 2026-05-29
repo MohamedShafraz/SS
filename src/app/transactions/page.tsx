@@ -33,8 +33,6 @@ export default function TransactionsPage() {
   const [loading, setLoading] = useState(true);
   const [selectedTransaction, setSelectedTransaction] =
     useState<Transaction | null>(null);
-  const [dateFilter, setDateFilter] = useState("today");
-  const [paymentFilter, setPaymentFilter] = useState("all");
 
   // Fetch transactions from Supabase
   useEffect(() => {
@@ -64,12 +62,7 @@ export default function TransactionsPage() {
     }
   };
 
-  const filteredTransactions = transactions.filter((txn) => {
-    const paymentMatch =
-      paymentFilter === "all" || txn.payment_method === paymentFilter;
-    // Add date filtering logic here
-    return paymentMatch;
-  });
+  const filteredTransactions = transactions;
 
   const handlePrintReceipt = (transaction: Transaction) => {
     toast.success(`Receipt for ${transaction.id} printed!`);
@@ -106,34 +99,6 @@ export default function TransactionsPage() {
               Total Sales
             </h3>
             <p className="text-3xl font-bold text-green-600">{totalSales}/=</p>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="bg-white rounded-lg shadow-md p-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <select
-              value={dateFilter}
-              onChange={(e) => setDateFilter(e.target.value)}
-              className="input-base"
-            >
-              <option value="today">Today</option>
-              <option value="week">This Week</option>
-              <option value="month">This Month</option>
-              <option value="year">This Year</option>
-              <option value="all">All Time</option>
-            </select>
-
-            <select
-              value={paymentFilter}
-              onChange={(e) => setPaymentFilter(e.target.value)}
-              className="input-base"
-            >
-              <option value="all">All Payment Methods</option>
-              <option value="Cash">Cash</option>
-              <option value="Card">Card</option>
-              <option value="Check">Check</option>
-            </select>
           </div>
         </div>
 
