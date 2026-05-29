@@ -34,9 +34,9 @@ const DEMO_PRODUCTS = [
   { id: "4", name: "School Bag - Green", category: "School Bags", price: 3000, cost: 1200, quantity: 20, image_url: "", barcode: "004" },
 ];
 
-const DEMO_TRANSACTIONS = [
-  { id: "t1", transaction_date: new Date().toISOString().split('T')[0], total_amount: 8500, discount_amount: 500, tax_amount: 0, payment_method: "cash" },
-];
+// const DEMO_TRANSACTIONS = [
+//   { id: "t1", transaction_date: new Date().toISOString().split('T')[0], total_amount: 8500, discount_amount: 500, tax_amount: 0, payment_method: "cash" },
+// ];
 
 const DEMO_TRANSACTION_ITEMS = [
   { id: "1", transaction_id: "t1", product_id: "1", quantity: 1, unit_price: 5000, discount: 500, subtotal: 4500 },
