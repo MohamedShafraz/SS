@@ -326,4 +326,4 @@ For issues and feature requests, please contact: support@sportsshop.com
 
 ## Author
 
-Built with ❤️ for modern retail POS systems.
+Built with care for modern retail POS systems.
