@@ -26,22 +26,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { AuthContext } from "@/lib/auth-context";
 
-// Demo data
-const DEMO_PRODUCTS = [
-  { id: "1", name: "Sports Shoes - Red", category: "Sports Shoes", price: 5000, cost: 2500, quantity: 15, image_url: "", barcode: "001" },
-  { id: "2", name: "School Shoes - Black", category: "School Shoes", price: 3500, cost: 1500, quantity: 25, image_url: "", barcode: "002" },
-  { id: "3", name: "Travel Bag - Blue", category: "Travel Bags", price: 4000, cost: 1800, quantity: 10, image_url: "", barcode: "003" },
-  { id: "4", name: "School Bag - Green", category: "School Bags", price: 3000, cost: 1200, quantity: 20, image_url: "", barcode: "004" },
-];
-
-// const DEMO_TRANSACTIONS = [
-//   { id: "t1", transaction_date: new Date().toISOString().split('T')[0], total_amount: 8500, discount_amount: 500, tax_amount: 0, payment_method: "cash" },
-// ];
-
-const DEMO_TRANSACTION_ITEMS = [
-  { id: "1", transaction_id: "t1", product_id: "1", quantity: 1, unit_price: 5000, discount: 500, subtotal: 4500 },
-  { id: "2", transaction_id: "t1", product_id: "2", quantity: 1, unit_price: 3500, discount: 0, subtotal: 3500 },
-];
+// Demo data (no longer used - all data is fetched from database)
 
 export default function Dashboard() {
   const authContext = useContext(AuthContext);
@@ -61,12 +46,19 @@ export default function Dashboard() {
     try {
       setLoading(true);
 
-      // If not authenticated, use demo data and fetch only user_id = NULL transactions
+      // If not authenticated, fetch real data filtered for user_id = NULL
       if (!authContext?.isAuthenticated) {
-        setProducts(DEMO_PRODUCTS);
-        setTransactionItems(DEMO_TRANSACTION_ITEMS);
-        
-        // Fetch only transactions where user_id is NULL
+        // Fetch all products
+        const { data: productsData, error: productsError } = await supabase
+          .from("products")
+          .select("*")
+          .is("user_id", null);
+
+        if (!productsError) {
+          setProducts(productsData || []);
+        }
+
+        // Fetch transactions where user_id is NULL
         const { data: transactionsData, error: transactionsError } = await supabase
           .from("transactions")
           .select("*")
@@ -75,6 +67,16 @@ export default function Dashboard() {
 
         if (!transactionsError) {
           setTransactions(transactionsData || []);
+        }
+
+        // Fetch transaction items
+        const { data: itemsData, error: itemsError } = await supabase
+          .from("transaction_items")
+          .select("*")
+          .is("user_id", null);
+
+        if (!itemsError) {
+          setTransactionItems(itemsData || []);
         }
         return;
       }
