@@ -1153,16 +1153,30 @@ export default function POSPage() {
                       setPendingProduct(product);
                       setShowVariantSelector(true);
                     } else {
-                      const item: CartItem = {
-                        id: product.id,
-                        name: product.name,
-                        price: product.price,
-                        quantity: 1,
-                        image_url: product.image_url,
-                        discount: 0,
-                        discountType: "lkr",
-                      };
-                      setReplacementCart([...replacementCart, item]);
+                      // Check if item already exists in replacement cart
+                      const existingItem = replacementCart.find((item) => item.id === product.id);
+                      if (existingItem) {
+                        // Increment quantity if item exists
+                        setReplacementCart(
+                          replacementCart.map((item) =>
+                            item.id === product.id
+                              ? { ...item, quantity: item.quantity + 1 }
+                              : item
+                          )
+                        );
+                      } else {
+                        // Add new item
+                        const item: CartItem = {
+                          id: product.id,
+                          name: product.name,
+                          price: product.price,
+                          quantity: 1,
+                          image_url: product.image_url,
+                          discount: 0,
+                          discountType: "lkr",
+                        };
+                        setReplacementCart([...replacementCart, item]);
+                      }
                     }
                   }}
                   className="p-2 text-left rounded bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-400 transition-colors"
@@ -1419,7 +1433,41 @@ export default function POSPage() {
                   <button
                     key={variant.id}
                     onClick={() => {
-                      addToCartWithVariant(pendingProduct, variant);
+                      if (mode === "returns") {
+                        // Handle for replacement cart
+                        const cartItemId = `${pendingProduct.id}-${variant.id}`;
+                        const existingItem = replacementCart.find((item) => item.id === cartItemId);
+                        
+                        if (existingItem) {
+                          // Increment quantity if item exists
+                          setReplacementCart(
+                            replacementCart.map((item) =>
+                              item.id === cartItemId
+                                ? { ...item, quantity: item.quantity + 1 }
+                                : item
+                            )
+                          );
+                        } else {
+                          // Add new item
+                          const variantPrice = pendingProduct.price + variant.price_adjustment;
+                          const newItem: CartItem = {
+                            id: cartItemId,
+                            name: pendingProduct.name,
+                            price: variantPrice,
+                            quantity: 1,
+                            image_url: pendingProduct.image_url,
+                            discount: 0,
+                            discountType: "lkr",
+                            variant_id: variant.id,
+                            variant_type: variant.variant_type,
+                            variant_value: variant.variant_value,
+                          };
+                          setReplacementCart([...replacementCart, newItem]);
+                        }
+                      } else {
+                        // Handle for main cart (sale mode)
+                        addToCartWithVariant(pendingProduct, variant);
+                      }
                       setShowVariantSelector(false);
                       setPendingProduct(null);
                     }}
