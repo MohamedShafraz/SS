@@ -1178,7 +1178,7 @@ export default function POSPage() {
         </div>
 
         {/* Replacement Cart Section */}
-        <div className="lg:col-span-1 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden">
+        <div className="lg:col-span-1 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden h-fit">
           <div className="p-4 border-b">
             <h2 className="text-lg font-semibold text-gray-900 mb-2">
               Replacement Cart
