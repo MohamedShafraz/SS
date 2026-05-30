@@ -25,7 +25,7 @@ export const VariantManager = ({
   const [quantity, setQuantity] = useState(0);
   const [priceAdjustment, setPriceAdjustment] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [ ,setEditingId] = useState<string | null>(null);
 
   const handleAddVariant = async (e: React.FormEvent) => {
     e.preventDefault();
