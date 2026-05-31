@@ -20,23 +20,46 @@ export const VariantManager = ({
   const [showForm, setShowForm] = useState(false);
   const [variantType, setVariantType] = useState("size");
   const [variantValue, setVariantValue] = useState("");
-  const [sku, setSku] = useState("");
-  const [barcode, setBarcode] = useState("");
   const [quantity, setQuantity] = useState(0);
   const [priceAdjustment, setPriceAdjustment] = useState(0);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [ ,setEditingId] = useState<string | null>(null);
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("Image must be less than 2MB");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      setImageBase64(base64);
+      setImagePreview(base64);
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleAddVariant = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!variantValue.trim() || !sku.trim() || !barcode.trim()) {
+    if (!variantValue.trim()) {
       toast.error("Please fill in all fields");
       return;
     }
 
     try {
       setLoading(true);
+      
+      // Auto-generate SKU and Barcode
+      const sku = `${variantType.toUpperCase().slice(0, 2)}-${variantValue.replace(/\s+/g, '').slice(0, 5)}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+      const barcode = `${Date.now().toString().slice(-8)}${Math.random().toString(36).substr(2, 2).toUpperCase()}`;
+      
       const result = await addProductVariant(
         productId,
         variantType,
@@ -44,16 +67,17 @@ export const VariantManager = ({
         sku,
         barcode,
         quantity,
-        priceAdjustment
+        priceAdjustment,
+        imageBase64 || undefined
       );
 
       if (result) {
         toast.success(`Variant added: ${variantType} - ${variantValue}`);
         setVariantValue("");
-        setSku("");
-        setBarcode("");
         setQuantity(0);
         setPriceAdjustment(0);
+        setImagePreview(null);
+        setImageBase64(null);
         setShowForm(false);
         setEditingId(null);
         onVariantsUpdated();
@@ -99,6 +123,15 @@ export const VariantManager = ({
                 key={variant.id}
                 className="inline-flex items-center gap-2 px-3 py-2 bg-blue-100 text-blue-700 rounded-full text-sm font-medium border border-blue-300"
               >
+                {variant.image_url && (
+                  <div className="w-6 h-6 rounded overflow-hidden bg-white flex-shrink-0">
+                    <img
+                      src={variant.image_url}
+                      alt={variant.variant_value}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                )}
                 <span>
                   <strong>{variant.variant_type}:</strong> {variant.variant_value}
                 </span>
@@ -169,31 +202,8 @@ export const VariantManager = ({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  SKU *
-                </label>
-                <input
-                  type="text"
-                  value={sku}
-                  onChange={(e) => setSku(e.target.value)}
-                  placeholder="SKU-M"
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Barcode *
-                </label>
-                <input
-                  type="text"
-                  value={barcode}
-                  onChange={(e) => setBarcode(e.target.value)}
-                  placeholder="123456"
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
-                />
-              </div>
+            <div className="p-2 bg-blue-50 rounded text-xs text-gray-600 border border-blue-200">
+              SKU and Barcode will be auto-generated
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -223,6 +233,27 @@ export const VariantManager = ({
               </div>
             </div>
 
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Variant Image (optional)
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleImageChange}
+                className="w-full text-xs"
+              />
+              {imagePreview && (
+                <div className="mt-2 p-2 bg-white rounded border border-gray-300">
+                  <img
+                    src={imagePreview}
+                    alt="Preview"
+                    className="w-full h-32 object-cover rounded"
+                  />
+                </div>
+              )}
+            </div>
+
             <div className="flex gap-2 pt-2">
               <button
                 type="submit"
@@ -237,10 +268,10 @@ export const VariantManager = ({
                   setShowForm(false);
                   setEditingId(null);
                   setVariantValue("");
-                  setSku("");
-                  setBarcode("");
                   setQuantity(0);
                   setPriceAdjustment(0);
+                  setImagePreview(null);
+                  setImageBase64(null);
                 }}
                 className="flex-1 px-3 py-1.5 bg-gray-400 text-white text-sm rounded hover:bg-gray-500 transition-colors"
               >

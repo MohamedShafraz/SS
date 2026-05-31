@@ -79,6 +79,7 @@ export interface ProductVariant {
   barcode: string;
   quantity: number;
   price_adjustment: number;          // Extra cost for this variant
+  image_url?: string;                // NEW: variant-specific image
   created_at: string;
   updated_at: string;
 }

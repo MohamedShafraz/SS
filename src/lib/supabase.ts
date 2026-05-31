@@ -74,7 +74,8 @@ export const addProductVariant = async (
   sku: string,
   barcode: string,
   quantity: number,
-  price_adjustment: number = 0
+  price_adjustment: number = 0,
+  imageUrl?: string  // NEW: optional variant image
 ): Promise<ProductVariant | null> => {
   try {
     const { data, error } = await supabase
@@ -88,6 +89,7 @@ export const addProductVariant = async (
           barcode,
           quantity,
           price_adjustment,
+          image_url: imageUrl || null,  // NEW: include image_url
         },
       ])
       .select();
