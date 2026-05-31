@@ -109,6 +109,11 @@ export default function ProductsPage() {
     }
 
     try {
+      // Calculate total quantity from variants if they exist
+      const totalQuantity = variants.length > 0 
+        ? variants.reduce((sum, v) => sum + (v.quantity || 0), 0)
+        : Math.max(0, formData.quantity || 0);
+
       if (editingId) {
         // Update existing product
         const { error } = await supabase
@@ -118,7 +123,7 @@ export default function ProductsPage() {
             category: formData.category,
             price: formData.price,
             cost: formData.cost,
-            quantity: Math.max(0, formData.quantity || 0),
+            quantity: totalQuantity,
             image_url: formData.image_url,
             barcode: formData.barcode,
             sku: formData.sku,
@@ -459,18 +464,22 @@ export default function ProductsPage() {
                     <div>
                       <label className="block text-sm font-medium text-gray-900 mb-2">
                         Quantity
+                        {variants.length > 0 && (
+                          <span className="text-xs text-gray-600 ml-2">(Variants: {variants.reduce((sum, v) => sum + (v.quantity || 0), 0)})</span>
+                        )}
                       </label>
                       <input
                         type="number"
                         min={0}
-                        value={formData.quantity || ""}
+                        value={variants.length > 0 ? variants.reduce((sum, v) => sum + (v.quantity || 0), 0) : (formData.quantity || "")}
                         onChange={(e) =>
-                          setFormData({
+                          variants.length === 0 && setFormData({
                             ...formData,
                             quantity: Math.max(0, parseInt(e.target.value) || 0),
                           })
                         }
-                        className="input-base"
+                        disabled={variants.length > 0}
+                        className={`input-base ${variants.length > 0 ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                         placeholder="Quantity"
                       />
                     </div>
