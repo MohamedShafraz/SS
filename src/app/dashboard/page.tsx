@@ -25,6 +25,8 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { AuthContext } from "@/lib/auth-context";
+import { getCategoryPresets, getStoredIndustryMode } from "@/lib/industry-presets";
+import type { IndustryMode } from "@/types";
 
 // Demo data (no longer used - all data is fetched from database)
 
@@ -36,84 +38,115 @@ export default function Dashboard() {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [transactionItems, setTransactionItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [industryMode, setIndustryMode] = useState<IndustryMode>("general");
 
-  // Fetch data on mount and when filters change
+  const categoryPresets = getCategoryPresets(industryMode);
+
   useEffect(() => {
-    fetchDashboardData();
-  }, [dateFilter, categoryFilter]);
+    setIndustryMode(getStoredIndustryMode());
+  }, []);
 
-  const fetchDashboardData = async () => {
-    try {
-      setLoading(true);
+  // Fetch base data on mount and when auth scope changes.
+  useEffect(() => {
+    let active = true;
 
-      // If not authenticated, fetch real data filtered for user_id = NULL
-      if (!authContext?.isAuthenticated) {
+    const fetchDashboardData = async () => {
+      try {
+        if (active) {
+          setLoading(true);
+        }
+
+        // If not authenticated, fetch real data filtered for user_id = NULL
+        if (!authContext?.isAuthenticated) {
+          // Fetch all products
+          const { data: productsData, error: productsError } = await supabase
+            .from("products")
+            .select("*")
+            .is("user_id", null);
+
+          if (!productsError) {
+            if (active) {
+              setProducts(productsData || []);
+            }
+          }
+
+          // Fetch transactions where user_id is NULL
+          const { data: transactionsData, error: transactionsError } = await supabase
+            .from("transactions")
+            .select("*")
+            .or("status.is.null,status.eq.completed")
+            .is("user_id", null)
+            .order("transaction_date", { ascending: false });
+
+          if (!transactionsError) {
+            if (active) {
+              setTransactions(transactionsData || []);
+            }
+          }
+
+          // Fetch transaction items
+          const { data: itemsData, error: itemsError } = await supabase
+            .from("transaction_items")
+            .select("*")
+            .is("user_id", null);
+
+          if (!itemsError) {
+            if (active) {
+              setTransactionItems(itemsData || []);
+            }
+          }
+          return;
+        }
+
         // Fetch all products
         const { data: productsData, error: productsError } = await supabase
           .from("products")
-          .select("*")
-          .is("user_id", null);
+          .select("*");
 
         if (!productsError) {
-          setProducts(productsData || []);
+          if (active) {
+            setProducts(productsData || []);
+          }
         }
 
-        // Fetch transactions where user_id is NULL
+        // Fetch all transactions (for authenticated users)
         const { data: transactionsData, error: transactionsError } = await supabase
           .from("transactions")
           .select("*")
-          .is("user_id", null)
+          .or("status.is.null,status.eq.completed")
           .order("transaction_date", { ascending: false });
 
         if (!transactionsError) {
-          setTransactions(transactionsData || []);
+          if (active) {
+            setTransactions(transactionsData || []);
+          }
         }
 
-        // Fetch transaction items
+        // Fetch transaction items to get category data
         const { data: itemsData, error: itemsError } = await supabase
           .from("transaction_items")
-          .select("*")
-          .is("user_id", null);
+          .select("*");
 
         if (!itemsError) {
-          setTransactionItems(itemsData || []);
+          if (active) {
+            setTransactionItems(itemsData || []);
+          }
         }
-        return;
+      } catch (error) {
+        console.error("Error fetching dashboard data:", error);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
       }
-      
-      // Fetch all products
-      const { data: productsData, error: productsError } = await supabase
-        .from("products")
-        .select("*");
+    };
 
-      if (!productsError) {
-        setProducts(productsData || []);
-      }
+    fetchDashboardData();
 
-      // Fetch all transactions (for authenticated users)
-      const { data: transactionsData, error: transactionsError } = await supabase
-        .from("transactions")
-        .select("*")
-        .order("transaction_date", { ascending: false });
-
-      if (!transactionsError) {
-        setTransactions(transactionsData || []);
-      }
-
-      // Fetch transaction items to get category data
-      const { data: itemsData, error: itemsError } = await supabase
-        .from("transaction_items")
-        .select("*");
-
-      if (!itemsError) {
-        setTransactionItems(itemsData || []);
-      }
-    } catch (error) {
-      console.error("Error fetching dashboard data:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    return () => {
+      active = false;
+    };
+  }, [authContext?.isAuthenticated]);
 
   // Get filtered transaction items by category
   const getFilteredItems = () => {
@@ -223,17 +256,7 @@ export default function Dashboard() {
     let totalSales = 0;
     
     // Initialize all categories
-    const allCategories = [
-      "Sports Shoes",
-      "School Shoes",
-      "Travel Bags",
-      "School Bags",
-      "Slippers",
-      "Sandals",
-      "Belts",
-    ];
-    
-    allCategories.forEach((cat) => categoryMap.set(cat, 0));
+    categoryPresets.forEach((cat) => categoryMap.set(cat, 0));
     
     // Get filtered items
     const filteredItems = categoryFilter === "all" 
@@ -359,13 +382,11 @@ export default function Dashboard() {
                 className="input-base"
               >
                 <option value="all">All Categories</option>
-                <option value="Sports Shoes">Sports Shoes</option>
-                <option value="School Shoes">School Shoes</option>
-                <option value="Travel Bags">Travel Bags</option>
-                <option value="School Bags">School Bags</option>
-                <option value="Slippers">Slippers</option>
-                <option value="Sandals">Sandals</option>
-                <option value="Belts">Belts</option>
+                {categoryPresets.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
               </select>
             </div>
           )}

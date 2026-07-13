@@ -1,9 +1,23 @@
 import { createClient } from "@supabase/supabase-js";
-import { Product, ProductVariant } from "@/types";
+import type { Database, Product, ProductVariant, ProductRow, ProductVariantRow } from "@/types";
+import { normalizeProduct, normalizeProductVariant } from "./contracts";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_POS_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_POS_SUPABASE_ANON_KEY || "";
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+function requirePublicEnv(value: string | undefined, name: string): string {
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
+const supabaseUrl = requirePublicEnv(
+  process.env.NEXT_PUBLIC_POS_SUPABASE_URL,
+  "NEXT_PUBLIC_POS_SUPABASE_URL"
+);
+const supabaseAnonKey = requirePublicEnv(
+  process.env.NEXT_PUBLIC_POS_SUPABASE_ANON_KEY,
+  "NEXT_PUBLIC_POS_SUPABASE_ANON_KEY"
+);
+export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
 
 // ============================================================
 // PRODUCT VARIANTS HELPER FUNCTIONS (Phase 2)
@@ -32,9 +46,10 @@ export const fetchProductsWithVariants = async (): Promise<
     if (variantsError) throw variantsError;
 
     // Map variants to products
-    const productsWithVariants = (products || []).map((product) => ({
-      ...product,
-      variants: (variants || []).filter((v) => v.product_id === product.id),
+    const normalizedVariants = (variants ?? []).map(normalizeProductVariant);
+    const productsWithVariants = (products ?? []).map((product) => ({
+      ...normalizeProduct(product),
+      variants: normalizedVariants.filter((v) => v.product_id === product.id),
     }));
 
     return productsWithVariants;
@@ -57,7 +72,7 @@ export const getProductVariants = async (
       .eq("product_id", productId);
 
     if (error) throw error;
-    return data || [];
+    return (data ?? []).map(normalizeProductVariant);
   } catch (error) {
     console.error("Error fetching variants:", error);
     return [];
@@ -89,13 +104,13 @@ export const addProductVariant = async (
           barcode,
           quantity,
           price_adjustment,
-          image_url: imageUrl || null,  // NEW: include image_url
+          image_url: imageUrl ?? null,  // NEW: include image_url
         },
       ])
       .select();
 
     if (error) throw error;
-    return data?.[0] || null;
+    return data?.[0] ? normalizeProductVariant(data[0]) : null;
   } catch (error) {
     console.error("Error adding variant:", error);
     return null;
@@ -137,9 +152,11 @@ export const findVariantByBarcode = async (
       .single();
 
     if (error && error.code !== "PGRST116") throw error; // PGRST116 = no rows
-    return data || null;
+    return data ? normalizeProductVariant(data) : null;
   } catch (error) {
     console.error("Error finding variant by barcode:", error);
     return null;
   }
 };
+
+export type { ProductRow, ProductVariantRow };

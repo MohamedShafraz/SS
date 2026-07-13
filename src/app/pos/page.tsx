@@ -1,7 +1,8 @@
 "use client";
 
 import { MainLayout } from "@/components/layout";
-import { useState, useRef, useEffect } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Trash2, Printer, Check, X, Barcode, Eye, ArrowLeft, ShoppingCart, RotateCcw } from "lucide-react";
 import toast from "react-hot-toast";
 import { supabase, fetchProductsWithVariants, findVariantByBarcode } from "@/lib/supabase";
@@ -44,7 +45,7 @@ interface TransactionItem {
   products?: {
     name: string;
     image_url: string;
-  };
+  } | null;
 }
 
 interface TransactionData {
@@ -56,10 +57,27 @@ interface TransactionData {
 }
 
 export default function POSPage() {
+  return (
+    <Suspense
+      fallback={
+        <MainLayout>
+          <div className="min-h-[60vh] bg-white rounded-lg shadow-lg animate-pulse" />
+        </MainLayout>
+      }
+    >
+      <POSContent />
+    </Suspense>
+  );
+}
+
+function POSContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const stripeStatus = searchParams.get("stripe");
+  const stripeSessionId = searchParams.get("session_id");
   const [mode, setMode] = useState<"sale" | "returns">("sale");  // NEW: mode toggle
   const [cart, setCart] = useState<CartItem[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [barcodeInput, setBarcodeInput] = useState("");
   const [discount, setDiscount] = useState(0);
@@ -68,6 +86,7 @@ export default function POSPage() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showVariantSelector, setShowVariantSelector] = useState(false);
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
+  const [stripeBusy, setStripeBusy] = useState(false);
   
   // NEW: Returns mode state
   const [transactionId, setTransactionId] = useState("");
@@ -79,25 +98,131 @@ export default function POSPage() {
   const [replacementCart, setReplacementCart] = useState<CartItem[]>([]);
   
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const stripeCallbackRef = useRef<string | null>(null);
 
-  // Fetch products with variants from Supabase
-  useEffect(() => {
-    fetchProducts();
-  }, []);
-
-  const fetchProducts = async () => {
+  const fetchProducts = useCallback(async (isActive: () => boolean = () => true) => {
     try {
-      setLoading(true);
+      if (isActive()) {
+        setLoading(true);
+      }
       const productsData = await fetchProductsWithVariants();
-      setProducts(productsData);
-      setFilteredProducts(productsData);
+      if (isActive()) {
+        setProducts(productsData);
+      }
     } catch (error) {
       console.error("Error:", error);
       toast.error("Error loading products");
     } finally {
-      setLoading(false);
+      if (isActive()) {
+        setLoading(false);
+      }
     }
-  };
+  }, []);
+
+  const filteredProducts = useMemo(() => {
+    if (!barcodeInput.trim()) {
+      return products;
+    }
+
+    const searchLower = barcodeInput.toLowerCase();
+    return products.filter(
+      (product) =>
+        product.barcode.toLowerCase().includes(searchLower) ||
+        product.name.toLowerCase().includes(searchLower) ||
+        product.sku.toLowerCase().includes(searchLower) ||
+        product.category.toLowerCase().includes(searchLower)
+    );
+  }, [barcodeInput, products]);
+
+  useEffect(() => {
+    if (!stripeStatus || !stripeSessionId) {
+      return;
+    }
+
+    const callbackKey = `${stripeStatus}:${stripeSessionId}`;
+    if (stripeCallbackRef.current === callbackKey) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+
+    const handleStripeCallback = async () => {
+      if (stripeStatus === "cancelled") {
+        await fetch("/api/payments/stripe/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: stripeSessionId }),
+          signal: controller.signal,
+        });
+        if (active) {
+          stripeCallbackRef.current = callbackKey;
+          toast("Stripe payment cancelled");
+          router.replace("/pos");
+        }
+        return;
+      }
+
+      if (stripeStatus === "success") {
+        if (active) {
+          setStripeBusy(true);
+        }
+        const response = await fetch("/api/payments/stripe/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: stripeSessionId }),
+          signal: controller.signal,
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.message || "Failed to finalize Stripe payment");
+        }
+
+        await fetchProducts(() => active);
+        if (active) {
+          stripeCallbackRef.current = callbackKey;
+          setCart([]);
+          setDiscount(0);
+          setDiscountType("lkr");
+          toast.success("Stripe payment completed successfully!");
+          router.replace("/pos");
+        }
+      }
+    };
+
+    handleStripeCallback()
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        console.error("Stripe callback error:", error);
+        toast.error(error instanceof Error ? error.message : "Stripe payment could not be completed");
+        router.replace("/pos");
+      })
+      .finally(() => {
+        if (active) {
+          setStripeBusy(false);
+        }
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [fetchProducts, router, stripeSessionId, stripeStatus]);
+
+  // Fetch products with variants from Supabase
+  useEffect(() => {
+    let active = true;
+
+    fetchProducts(() => active);
+
+    return () => {
+      active = false;
+    };
+  }, [fetchProducts]);
 
   // NEW: Lookup original transaction for returns
   const handleLookupTransaction = async () => {
@@ -289,22 +414,6 @@ export default function POSPage() {
   // Filter products based on search input
   const handleSearchFilter = (searchText: string) => {
     setBarcodeInput(searchText);
-
-    if (!searchText.trim()) {
-      setFilteredProducts(products);
-      return;
-    }
-
-    const searchLower = searchText.toLowerCase();
-    const filtered = products.filter(
-      (product) =>
-        product.barcode.toLowerCase().includes(searchLower) ||
-        product.name.toLowerCase().includes(searchLower) ||
-        product.sku.toLowerCase().includes(searchLower) ||
-        product.category.toLowerCase().includes(searchLower)
-    );
-
-    setFilteredProducts(filtered);
   };
 
   useEffect(() => {
@@ -324,7 +433,6 @@ export default function POSPage() {
           addToCartWithVariant(product, variant);
           toast.success(`Added ${product.name} - ${variant.variant_value}`);
           setBarcodeInput("");
-          setFilteredProducts(products);
           return;
         }
       }
@@ -348,7 +456,6 @@ export default function POSPage() {
           toast.success(`Added ${product.name}`);
         }
         setBarcodeInput("");
-        setFilteredProducts(products);
       } else {
         toast.error("Product not found");
       }
@@ -560,6 +667,39 @@ export default function POSPage() {
       return;
     }
 
+    if (paymentMethod === "stripe") {
+      try {
+        setStripeBusy(true);
+        const response = await fetch("/api/payments/stripe/create-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cart,
+            total,
+            discountAmount: globalDiscount,
+          }),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.message || "Failed to create Stripe checkout");
+        }
+
+        if (!result.sessionUrl) {
+          throw new Error("Stripe checkout URL was not returned");
+        }
+
+        window.location.href = result.sessionUrl;
+        return;
+      } catch (error) {
+        console.error("Stripe checkout error:", error);
+        toast.error(error instanceof Error ? error.message : "Error starting Stripe checkout");
+        setStripeBusy(false);
+        return;
+      }
+    }
+
     try {
       // Save transaction to Supabase
       const { data: transactionData, error: transactionError } = await supabase
@@ -571,6 +711,11 @@ export default function POSPage() {
             discount_amount: globalDiscount,
             tax_amount: 0,
             payment_method: paymentMethod,
+            status: "completed",
+            stripe_session_id: null,
+            user_id: null,
+            is_replacement_transaction: false,
+            original_return_id: null,
           },
         ])
         .select();
@@ -980,6 +1125,7 @@ export default function POSPage() {
                 <option value="cash">Cash</option>
                 <option value="card">Card</option>
                 <option value="check">Check</option>
+                <option value="stripe">Stripe</option>
               </select>
             </div>
 
@@ -987,10 +1133,11 @@ export default function POSPage() {
             <div className="flex gap-2">
               <button
                 onClick={handleCheckout}
-                className="btn-success flex-1 flex items-center justify-center gap-2"
+                disabled={stripeBusy}
+                className="btn-success flex-1 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
               >
                 <Check className="w-5 h-5" />
-                Checkout
+                {paymentMethod === "stripe" ? "Pay with Stripe" : "Checkout"}
               </button>
               <button
                 onClick={handlePrint}

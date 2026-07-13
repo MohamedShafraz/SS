@@ -1,7 +1,7 @@
 "use client";
 
 import { MainLayout } from "@/components/layout";
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Eye, Download, Printer } from "lucide-react";
 import toast from "react-hot-toast";
 import { supabase } from "@/lib/supabase";
@@ -34,17 +34,15 @@ export default function TransactionsPage() {
   const [selectedTransaction, setSelectedTransaction] =
     useState<Transaction | null>(null);
 
-  // Fetch transactions from Supabase
-  useEffect(() => {
-    fetchTransactions();
-  }, []);
-
-  const fetchTransactions = async () => {
+  const fetchTransactions = useCallback(async (isActive: () => boolean = () => true) => {
     try {
-      setLoading(true);
+      if (isActive()) {
+        setLoading(true);
+      }
       const { data, error } = await supabase
         .from("transactions")
         .select("*")
+        .or("status.is.null,status.eq.completed")
         .order("transaction_date", { ascending: false });
 
       if (error) {
@@ -53,14 +51,38 @@ export default function TransactionsPage() {
         return;
       }
 
-      setTransactions(data || []);
+      if (isActive()) {
+        setTransactions(
+          (data || []).map((transaction) => ({
+            id: transaction.id,
+            transaction_date: transaction.transaction_date,
+            total_amount: transaction.total_amount,
+            discount_amount: transaction.discount_amount ?? 0,
+            tax_amount: transaction.tax_amount ?? 0,
+            payment_method: transaction.payment_method,
+          }))
+        );
+      }
     } catch (error) {
       console.error("Error:", error);
       toast.error("Error loading transactions");
     } finally {
-      setLoading(false);
+      if (isActive()) {
+        setLoading(false);
+      }
     }
-  };
+  }, []);
+
+  // Fetch transactions from Supabase
+  useEffect(() => {
+    let active = true;
+
+    fetchTransactions(() => active);
+
+    return () => {
+      active = false;
+    };
+  }, [fetchTransactions]);
 
   const filteredTransactions = transactions;
 

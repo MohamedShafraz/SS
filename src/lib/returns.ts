@@ -1,10 +1,45 @@
 import { supabase } from "./supabase";
-import { Return } from "@/types";
+import type {
+  ReplacementItemInsert,
+  Return,
+  ReturnItemInsert,
+  Transaction,
+  TransactionInsert,
+  TransactionItemWithProductRow,
+} from "@/types";
+import {
+  normalizeReturn,
+  normalizeTransaction,
+  normalizeTransactionItemWithProduct,
+} from "./contracts";
+
+export interface TransactionWithItems {
+  transaction: Transaction;
+  items: ReturnableTransactionItem[];
+}
+
+export type ReturnableTransactionItem = ReturnType<typeof normalizeTransactionItemWithProduct>;
+
+export interface ReturnItemInput {
+  product_id: string;
+  variant_id?: string | null;
+  quantity: number;
+  refund_amount: number;
+}
+
+export interface ReplacementItemInput {
+  product_id: string;
+  variant_id?: string | null;
+  quantity: number;
+  replacement_price: number;
+}
 
 /**
  * Fetch a transaction with all its items
  */
-export const fetchTransactionWithItems = async (transactionId: string) => {
+export const fetchTransactionWithItems = async (
+  transactionId: string
+): Promise<TransactionWithItems | null> => {
   try {
     const { data: transaction, error: txError } = await supabase
       .from("transactions")
@@ -21,7 +56,12 @@ export const fetchTransactionWithItems = async (transactionId: string) => {
 
     if (itemsError) throw itemsError;
 
-    return { transaction, items };
+    return {
+      transaction: normalizeTransaction(transaction),
+      items: ((items ?? []) as TransactionItemWithProductRow[]).map(
+        normalizeTransactionItemWithProduct
+      ),
+    };
   } catch (error) {
     console.error("Error fetching transaction:", error);
     return null;
@@ -51,7 +91,7 @@ export const createReturn = async (
       .select();
 
     if (error) throw error;
-    return data?.[0] || null;
+    return data?.[0] ? normalizeReturn(data[0]) : null;
   } catch (error) {
     console.error("Error creating return:", error);
     return null;
@@ -63,18 +103,13 @@ export const createReturn = async (
  */
 export const addReturnItems = async (
   returnId: string,
-  items: Array<{
-    product_id: string;
-    variant_id?: string;
-    quantity: number;
-    refund_amount: number;
-  }>
+  items: ReturnItemInput[]
 ): Promise<boolean> => {
   try {
-    const returnItems = items.map((item) => ({
+    const returnItems: ReturnItemInsert[] = items.map((item) => ({
       return_id: returnId,
       product_id: item.product_id,
-      variant_id: item.variant_id || null,
+      variant_id: item.variant_id ?? null,
       quantity: item.quantity,
       refund_amount: item.refund_amount,
       status: "pending",
@@ -97,18 +132,13 @@ export const addReturnItems = async (
  */
 export const addReplacementItems = async (
   returnId: string,
-  items: Array<{
-    product_id: string;
-    variant_id?: string;
-    quantity: number;
-    replacement_price: number;
-  }>
+  items: ReplacementItemInput[]
 ): Promise<boolean> => {
   try {
-    const replacementItems = items.map((item) => ({
+    const replacementItems: ReplacementItemInsert[] = items.map((item) => ({
       return_id: returnId,
       product_id: item.product_id,
-      variant_id: item.variant_id || null,
+      variant_id: item.variant_id ?? null,
       quantity: item.quantity,
       replacement_price: item.replacement_price,
       status: "pending",
@@ -134,25 +164,28 @@ export const createReplacementTransaction = async (
   totalAmount: number,
   discountAmount: number,
   paymentMethod: string
-) => {
+): Promise<Transaction | null> => {
   try {
+    const replacementTransaction: TransactionInsert = {
+      transaction_date: new Date().toISOString(),
+      total_amount: totalAmount,
+      discount_amount: discountAmount,
+      tax_amount: 0,
+      payment_method: paymentMethod,
+      status: "completed",
+      stripe_session_id: null,
+      user_id: null,
+      is_replacement_transaction: true,
+      original_return_id: returnId,
+    };
+
     const { data, error } = await supabase
       .from("transactions")
-      .insert([
-        {
-          transaction_date: new Date().toISOString(),
-          total_amount: totalAmount,
-          discount_amount: discountAmount,
-          tax_amount: 0,
-          payment_method: paymentMethod,
-          is_replacement_transaction: true,
-          original_return_id: returnId,
-        },
-      ])
+      .insert([replacementTransaction])
       .select();
 
     if (error) throw error;
-    return data?.[0] || null;
+    return data?.[0] ? normalizeTransaction(data[0]) : null;
   } catch (error) {
     console.error("Error creating replacement transaction:", error);
     return null;

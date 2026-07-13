@@ -56,7 +56,7 @@ export function Sidebar() {
         <div className="p-6 border-b border-gray-800 sticky top-0 bg-gray-900">
           <a href="/" className="flex items-center gap-2">
             <ShoppingCart className="w-8 h-8 flex-shrink-0" />
-            <h1 className="text-xl font-bold truncate">Sports Shop POS</h1>
+            <h1 className="text-xl font-bold truncate">MSPOS</h1>
           </a>
         </div>
 
@@ -94,6 +94,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const displayName = user?.name?.trim() || user?.email || "User";
 
   // Client-side guard: ensure cashier can't access non-POS routes
   useEffect(() => {
@@ -112,10 +113,10 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
           <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex items-center justify-between sticky top-0 z-10 flex-shrink-0">
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-600 text-white rounded-full flex items-center justify-center font-semibold flex-shrink-0">
-                {user.name.charAt(0).toUpperCase()}
+                {displayName.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-gray-900 truncate">{user.name}</p>
+                <p className="text-sm font-semibold text-gray-900 truncate">{displayName}</p>
                 <p className="text-xs text-gray-600 capitalize truncate">{user.role}</p>
               </div>
             </div>

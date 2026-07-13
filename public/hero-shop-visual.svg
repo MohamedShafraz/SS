@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1100" viewBox="0 0 1400 1100">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="55%" stop-color="#1d4ed8"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#e2e8f0" stop-opacity="0.92"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1400" height="1100" rx="48" fill="url(#bg)"/>
+  <circle cx="1140" cy="170" r="190" fill="#ffffff" fill-opacity="0.08"/>
+  <circle cx="160" cy="920" r="240" fill="#ffffff" fill-opacity="0.06"/>
+
+  <rect x="100" y="100" width="1200" height="900" rx="36" fill="url(#panel)"/>
+
+  <rect x="160" y="170" width="1080" height="140" rx="28" fill="#0f172a"/>
+  <text x="210" y="238" fill="#ffffff" font-family="Arial, sans-serif" font-size="48" font-weight="700">MSPOS</text>
+  <text x="210" y="278" fill="#cbd5e1" font-family="Arial, sans-serif" font-size="24">Separate shop types. Low-cost plans. One retail system.</text>
+
+  <rect x="160" y="350" width="420" height="260" rx="28" fill="#ffffff"/>
+  <text x="200" y="410" fill="#0f172a" font-family="Arial, sans-serif" font-size="34" font-weight="700">General Retail</text>
+  <text x="200" y="455" fill="#475569" font-family="Arial, sans-serif" font-size="22">Simple multi-category retail</text>
+  <text x="200" y="515" fill="#0f172a" font-family="Arial, sans-serif" font-size="34" font-weight="700">LKR 4,900 / month</text>
+  <rect x="200" y="545" width="160" height="28" rx="14" fill="#dbeafe"/>
+
+  <rect x="610" y="350" width="420" height="260" rx="28" fill="#ffffff"/>
+  <text x="650" y="410" fill="#0f172a" font-family="Arial, sans-serif" font-size="34" font-weight="700">Sports Shop</text>
+  <text x="650" y="455" fill="#475569" font-family="Arial, sans-serif" font-size="22">Shoes, bags, and seasonal stock</text>
+  <text x="650" y="515" fill="#0f172a" font-family="Arial, sans-serif" font-size="34" font-weight="700">LKR 5,400 / month</text>
+  <rect x="650" y="545" width="160" height="28" rx="14" fill="#dcfce7"/>
+
+  <rect x="160" y="650" width="420" height="220" rx="28" fill="#ffffff"/>
+  <text x="200" y="715" fill="#0f172a" font-family="Arial, sans-serif" font-size="34" font-weight="700">Fashion & Boutique</text>
+  <text x="200" y="760" fill="#475569" font-family="Arial, sans-serif" font-size="22">Clothing with premium presentation</text>
+  <text x="200" y="820" fill="#0f172a" font-family="Arial, sans-serif" font-size="30" font-weight="700">LKR 5,200 / month</text>
+
+  <rect x="610" y="650" width="420" height="220" rx="28" fill="#ffffff"/>
+  <text x="650" y="715" fill="#0f172a" font-family="Arial, sans-serif" font-size="34" font-weight="700">Electronics Store</text>
+  <text x="650" y="760" fill="#475569" font-family="Arial, sans-serif" font-size="22">Fast-moving gadgets and accessories</text>
+  <text x="650" y="820" fill="#0f172a" font-family="Arial, sans-serif" font-size="30" font-weight="700">LKR 5,900 / month</text>
+</svg>

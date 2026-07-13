@@ -10,8 +10,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <title>Sports Shop POS System</title>
-        <meta name="description" content="Modern Point of Sale System for Sports Shop" />
+        <title>MSPOS</title>
+        <meta
+          name="description"
+          content="Modern point of sale platform for retail, service, medical, and specialty businesses"
+        />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </head>
       <body className="bg-gray-50">

@@ -1,12 +1,13 @@
 "use client";
 
 import { MainLayout } from "@/components/layout";
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Plus, Edit, Trash2, Barcode } from "lucide-react";
 import toast from "react-hot-toast";
 import { supabase, getProductVariants } from "@/lib/supabase";
 import { VariantManager } from "@/components/VariantManager";
-import { ProductVariant } from "@/types";
+import { IndustryMode, ProductVariant } from "@/types";
+import { getCategoryPresets, getStoredIndustryMode } from "@/lib/industry-presets";
 
 interface Product {
   id: string;
@@ -28,27 +29,21 @@ export default function ProductsPage() {
   const [formData, setFormData] = useState<Partial<Product>>({});
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [industryMode, setIndustryMode] = useState<IndustryMode>("general");
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [variantsLoading, setVariantsLoading] = useState(false);
 
-  const categories = [
-    "Sports Shoes",
-    "School Shoes",
-    "Travel Bags",
-    "School Bags",
-    "Slippers",
-    "Sandals",
-    "Belts",
-  ];
+  const categories = getCategoryPresets(industryMode);
 
-  // Fetch products from Supabase
   useEffect(() => {
-    fetchProducts();
+    setIndustryMode(getStoredIndustryMode());
   }, []);
 
-  const fetchProducts = async () => {
+  const fetchProducts = useCallback(async (isActive: () => boolean = () => true) => {
     try {
-      setLoading(true);
+      if (isActive()) {
+        setLoading(true);
+      }
       const { data, error } = await supabase
         .from("products")
         .select("*")
@@ -60,14 +55,41 @@ export default function ProductsPage() {
         return;
       }
 
-      setProducts(data || []);
+      if (isActive()) {
+        setProducts(
+          (data || []).map((product) => ({
+            id: product.id,
+            name: product.name,
+            category: product.category,
+            price: product.price,
+            cost: product.cost,
+            quantity: product.quantity ?? 0,
+            image_url: product.image_url ?? "",
+            barcode: product.barcode ?? "",
+            sku: product.sku ?? "",
+          }))
+        );
+      }
     } catch (error) {
       console.error("Error:", error);
       toast.error("Error loading products");
     } finally {
-      setLoading(false);
+      if (isActive()) {
+        setLoading(false);
+      }
     }
-  };
+  }, []);
+
+  // Fetch products from Supabase
+  useEffect(() => {
+    let active = true;
+
+    fetchProducts(() => active);
+
+    return () => {
+      active = false;
+    };
+  }, [fetchProducts]);
 
   const filteredProducts = products.filter((product) => {
     const searchLower = searchTerm.toLowerCase();
@@ -124,7 +146,7 @@ export default function ProductsPage() {
             price: formData.price,
             cost: formData.cost,
             quantity: totalQuantity,
-            image_url: formData.image_url,
+            image_url: formData.image_url ?? null,
             barcode: formData.barcode,
             sku: formData.sku,
             updated_at: new Date().toISOString(),
@@ -146,7 +168,7 @@ export default function ProductsPage() {
             price: formData.price,
             cost: formData.cost,
             quantity: Math.max(0, formData.quantity || 0),
-            image_url: formData.image_url,
+            image_url: formData.image_url ?? null,
             barcode: formData.barcode || `BCD-${Date.now()}`,
             sku: formData.sku || `SKU-${Date.now()}`,
           },
@@ -424,6 +446,9 @@ export default function ProductsPage() {
                         </option>
                       ))}
                     </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Categories follow the selected industry profile in Settings.
+                    </p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
