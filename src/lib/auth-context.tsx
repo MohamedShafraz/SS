@@ -2,16 +2,11 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useRouter } from "next/navigation";
-
-interface User {
-  id: string;
-  email: string;
-  name: string;
-  role: "admin" | "cashier";
-}
+import type { AuthUser } from "@/types";
+import { isAuthUser, isLoginResponse, readMessage } from "./contracts";
 
 interface AuthContextType {
-  user: User | null;
+  user: AuthUser | null;
   token: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
@@ -26,7 +21,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export { AuthContext };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDemoMode, setDemoMode] = useState(false);
@@ -38,7 +33,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (storedUser) {
       try {
-        const parsedUser = JSON.parse(storedUser);
+        const parsedUser: unknown = JSON.parse(storedUser);
+        if (!isAuthUser(parsedUser)) {
+          throw new Error("Stored user has an invalid shape");
+        }
         setUser(parsedUser);
         setToken("authenticated"); // Cookie handles actual token
       } catch (error) {
@@ -58,24 +56,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ email, password }),
       });
 
+      const data: unknown = await response.json();
+
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || "Login failed");
+        throw new Error(readMessage(data, "Login failed"));
       }
 
-      const data = await response.json();
+      if (!isLoginResponse(data)) {
+        throw new Error("Login response was not valid");
+      }
       
       setToken(data.token);
       setUser(data.user);
       localStorage.setItem("auth_user", JSON.stringify(data.user));
-
-      setTimeout(() => {
-        if (data.user?.role === "cashier") {
-          router.push("/pos");
-        } else {
-          router.push("/dashboard");
-        }
-      }, 100);
     } catch (error) {
       console.error("Login error:", error);
       throw error;
