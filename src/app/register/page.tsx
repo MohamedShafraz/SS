@@ -141,7 +141,7 @@ function RegisterContent() {
                   <ShoppingCart className="h-5 w-5" />
                 </span>
                 <div>
-                  <p className="text-sm font-semibold text-slate-500">MSPOS</p>
+                  <p className="text-sm font-semibold text-slate-500">MSHPOS</p>
                   <h1 className="text-2xl font-bold text-slate-950">Create account</h1>
                 </div>
               </div>
@@ -259,7 +259,7 @@ function RegisterContent() {
             </div>
           </div>
 
-          <p className="text-xs text-slate-500">© MSPOS</p>
+          <p className="text-xs text-slate-500">© MSHPOS</p>
         </section>
 
         <section className="relative hidden min-h-screen overflow-hidden bg-slate-950 lg:block">

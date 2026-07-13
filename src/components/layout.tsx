@@ -56,7 +56,7 @@ export function Sidebar() {
         <div className="p-6 border-b border-gray-800 sticky top-0 bg-gray-900">
           <a href="/" className="flex items-center gap-2">
             <ShoppingCart className="w-8 h-8 flex-shrink-0" />
-            <h1 className="text-xl font-bold truncate">MSPOS</h1>
+            <h1 className="text-xl font-bold truncate">MSHPOS</h1>
           </a>
         </div>
 

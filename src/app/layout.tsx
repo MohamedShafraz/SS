@@ -10,7 +10,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <title>MSPOS</title>
+        <title>MSHPOS</title>
         <meta
           name="description"
           content="Modern point of sale platform for retail, service, medical, and specialty businesses"

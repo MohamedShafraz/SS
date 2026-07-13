@@ -18,7 +18,7 @@
   <rect x="100" y="100" width="1200" height="900" rx="36" fill="url(#panel)"/>
 
   <rect x="160" y="170" width="1080" height="140" rx="28" fill="#0f172a"/>
-  <text x="210" y="238" fill="#ffffff" font-family="Arial, sans-serif" font-size="48" font-weight="700">MSPOS</text>
+  <text x="210" y="238" fill="#ffffff" font-family="Arial, sans-serif" font-size="48" font-weight="700">MSHPOS</text>
   <text x="210" y="278" fill="#cbd5e1" font-family="Arial, sans-serif" font-size="24">Separate shop types. Low-cost plans. One retail system.</text>
 
   <rect x="160" y="350" width="420" height="260" rx="28" fill="#ffffff"/>

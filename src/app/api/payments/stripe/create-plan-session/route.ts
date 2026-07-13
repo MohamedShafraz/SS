@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
           price_data: {
             currency: stripeCurrency,
             product_data: {
-              name: `MSPOS - ${plan.name} Plan`,
+              name: `MSHPOS - ${plan.name} Plan`,
             },
             unit_amount: Math.max(1, Math.round(plan.amount * 100)),
           },

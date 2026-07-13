@@ -16,7 +16,7 @@ export default function Home() {
             </div>
             <div>
               <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Retail control system</p>
-              <h1 className="text-lg sm:text-xl font-semibold">MSPOS</h1>
+              <h1 className="text-lg sm:text-xl font-semibold">MSHPOS</h1>
             </div>
           </div>
           <div className="flex gap-3">
