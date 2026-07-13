@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS transactions (
   discount_amount DECIMAL(10, 2) DEFAULT 0,     -- Total discount given
   tax_amount DECIMAL(10, 2) DEFAULT 0,          -- Tax collected (5%)
   payment_method VARCHAR(50) NOT NULL,          -- cash, card, check, etc.
+  status VARCHAR(20) DEFAULT 'completed',       -- pending, completed, cancelled
+  stripe_session_id TEXT,                       -- Stripe Checkout Session ID
   user_id UUID,                                 -- Cashier ID (optional)
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -41,6 +43,8 @@ CREATE TABLE IF NOT EXISTS transactions (
 -- Create indexes for faster queries
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(transaction_date);
 CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
+CREATE INDEX IF NOT EXISTS idx_transactions_stripe_session_id ON transactions(stripe_session_id);
 
 -- ============================================================
 -- 3. TRANSACTION ITEMS TABLE (Individual items in each transaction)
@@ -101,7 +105,31 @@ CREATE TABLE IF NOT EXISTS discounts (
 );
 
 -- ============================================================
--- 6. USERS TABLE (For multi-user support)
+-- 6. PLAN PURCHASES TABLE (For plan payments)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS plan_purchases (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  plan_name VARCHAR(100) NOT NULL,
+  amount DECIMAL(10, 2) NOT NULL,
+  currency VARCHAR(10) DEFAULT 'lkr',
+  status VARCHAR(20) DEFAULT 'pending',
+  stripe_session_id TEXT,
+  customer_name VARCHAR(255),
+  customer_email VARCHAR(255),
+  password_hash TEXT,
+  user_role VARCHAR(50) DEFAULT 'admin',
+  user_id UUID,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_purchases_status ON plan_purchases(status);
+CREATE INDEX IF NOT EXISTS idx_plan_purchases_stripe_session_id ON plan_purchases(stripe_session_id);
+CREATE INDEX IF NOT EXISTS idx_plan_purchases_customer_email ON plan_purchases(customer_email);
+CREATE INDEX IF NOT EXISTS idx_plan_purchases_user_id ON plan_purchases(user_id);
+
+-- ============================================================
+-- 7. USERS TABLE (For multi-user support)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

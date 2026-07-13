@@ -2,6 +2,44 @@
 // EXISTING TYPES (keep as is)
 // ============================================================
 
+export type IndustryMode =
+  | "general"
+  | "sports"
+  | "mechanical"
+  | "medical"
+  | "fashion"
+  | "electronics"
+  | "grocery";
+
+export type AuthRole = "admin" | "manager" | "cashier";
+export type ReturnStatus = "pending" | "completed" | "cancelled";
+export type TransactionStatus = "pending" | "completed" | "cancelled";
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  role: AuthRole;
+}
+
+export interface LoginResponse {
+  token: string;
+  user: AuthUser;
+  message?: string;
+}
+
+export interface BusinessProfile {
+  businessName: string;
+  address: string;
+  phone: string;
+  email: string;
+  taxRate: number;
+  currency: string;
+  businessType: string;
+  barcodePrefix: string;
+  industryMode: IndustryMode;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -24,10 +62,12 @@ export interface Transaction {
   discount_amount: number;
   tax_amount: number;
   payment_method: string;
-  user_id: string;
+  status?: TransactionStatus;
+  stripe_session_id?: string | null;
+  user_id: string | null;
   created_at: string;
   is_replacement_transaction?: boolean;      // NEW: marks if this is a replacement
-  original_return_id?: string;                // NEW: links to original return
+  original_return_id?: string | null;         // NEW: links to original return
 }
 
 export interface TransactionItem {
@@ -79,7 +119,7 @@ export interface ProductVariant {
   barcode: string;
   quantity: number;
   price_adjustment: number;          // Extra cost for this variant
-  image_url?: string;                // NEW: variant-specific image
+  image_url?: string | null;         // NEW: variant-specific image
   created_at: string;
   updated_at: string;
 }
@@ -88,11 +128,11 @@ export interface Return {
   id: string;
   original_transaction_id: string;
   return_date: string;
-  reason: string;                    // 'Wrong size', 'Damaged', etc.
-  notes: string;
-  status: "pending" | "completed" | "cancelled";
+  reason: string | null;             // 'Wrong size', 'Damaged', etc.
+  notes: string | null;
+  status: ReturnStatus;
   created_at: string;
-  updated_at: string;
+  updated_at: string | null;
 }
 
 export interface ReturnItem {
@@ -102,7 +142,7 @@ export interface ReturnItem {
   variant_id: string | null;
   quantity: number;
   refund_amount: number;
-  status: "pending" | "completed" | "cancelled";
+  status: ReturnStatus;
   created_at: string;
 }
 
@@ -113,7 +153,7 @@ export interface ReplacementItem {
   variant_id: string | null;
   quantity: number;
   replacement_price: number;
-  status: "pending" | "completed" | "cancelled";
+  status: ReturnStatus;
   created_at: string;
 }
 
@@ -129,4 +169,260 @@ export interface CartItem {
   variant_id?: string;               // NEW: for variant support
   variant_type?: string;             // NEW: e.g., 'size'
   variant_value?: string;            // NEW: e.g., 'M'
+}
+
+export interface ProductRow {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  cost: number;
+  quantity: number;
+  image_url: string;
+  barcode: string;
+  sku: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProductInsert = Pick<ProductRow, "name" | "category" | "price" | "cost"> &
+  Partial<Pick<ProductRow, "id" | "quantity" | "created_at" | "updated_at">> & {
+  image_url?: string | null;
+  barcode?: string;
+  sku?: string;
+};
+
+export interface NullableProductRow extends Omit<ProductRow, "quantity" | "image_url" | "barcode" | "sku" | "created_at" | "updated_at"> {
+  quantity: number | null;
+  image_url: string | null;
+  barcode: string | null;
+  sku: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export type NullableProductInsert = Omit<NullableProductRow, "id" | "created_at" | "updated_at"> & {
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export interface ProductVariantRow {
+  id: string;
+  product_id: string;
+  variant_type: string;
+  variant_value: string;
+  sku: string;
+  barcode: string;
+  quantity: number;
+  price_adjustment: number;
+  image_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProductVariantInsert = Omit<ProductVariantRow, "id" | "created_at" | "updated_at"> & {
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export interface TransactionRow {
+  id: string;
+  transaction_date: string;
+  total_amount: number;
+  discount_amount: number;
+  tax_amount: number;
+  payment_method: string;
+  status: TransactionStatus | null;
+  stripe_session_id: string | null;
+  user_id: string | null;
+  created_at: string | null;
+  is_replacement_transaction: boolean | null;
+  original_return_id: string | null;
+}
+
+export type TransactionInsert = Pick<
+  TransactionRow,
+  "transaction_date" | "total_amount" | "discount_amount" | "tax_amount" | "payment_method"
+> &
+  Partial<
+    Pick<
+      TransactionRow,
+      | "id"
+      | "status"
+      | "stripe_session_id"
+      | "user_id"
+      | "created_at"
+      | "is_replacement_transaction"
+      | "original_return_id"
+    >
+  >;
+
+export interface TransactionItemRow {
+  id: string;
+  transaction_id: string;
+  product_id: string;
+  quantity: number;
+  unit_price: number;
+  discount: number;
+  subtotal: number;
+}
+
+export type TransactionItemWithProductRow = TransactionItemRow & {
+  products: Pick<ProductRow, "name" | "image_url"> | null;
+};
+
+export interface ReturnRow {
+  id: string;
+  original_transaction_id: string;
+  return_date: string;
+  reason: string | null;
+  notes: string | null;
+  status: ReturnStatus | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export type ReturnInsert = Omit<ReturnRow, "id" | "created_at" | "updated_at"> & {
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export interface ReturnItemRow {
+  id: string;
+  return_id: string;
+  product_id: string;
+  variant_id: string | null;
+  quantity: number;
+  refund_amount: number;
+  status: ReturnStatus | null;
+  created_at: string | null;
+}
+
+export type ReturnItemInsert = Omit<ReturnItemRow, "id" | "created_at"> & {
+  id?: string;
+  created_at?: string;
+};
+
+export interface ReplacementItemRow {
+  id: string;
+  return_id: string;
+  product_id: string;
+  variant_id: string | null;
+  quantity: number;
+  replacement_price: number;
+  status: ReturnStatus | null;
+  created_at: string | null;
+}
+
+export type ReplacementItemInsert = Omit<ReplacementItemRow, "id" | "created_at"> & {
+  id?: string;
+  created_at?: string;
+};
+
+export interface UserRow {
+  id: string;
+  email: string;
+  name: string | null;
+  password_hash: string;
+  role: AuthRole | null;
+  active: boolean | null;
+  last_login: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  password_reset_token_hash?: string | null;
+  password_reset_expires_at?: string | null;
+}
+
+export interface PlanPurchaseRow {
+  id: string;
+  plan_name: string;
+  amount: number;
+  currency: string | null;
+  status: string | null;
+  stripe_session_id: string | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  password_hash: string | null;
+  user_role: AuthRole | null;
+  user_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export type PlanPurchaseInsert = Omit<PlanPurchaseRow, "id" | "created_at" | "updated_at"> & {
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export interface Database {
+  public: {
+    Tables: {
+      products: {
+        Row: ProductRow & Record<string, unknown>;
+        Insert: ProductInsert & Record<string, unknown>;
+        Update: Partial<ProductInsert> & Record<string, unknown>;
+        Relationships: [];
+      };
+      product_variants: {
+        Row: ProductVariantRow & Record<string, unknown>;
+        Insert: ProductVariantInsert & Record<string, unknown>;
+        Update: Partial<ProductVariantInsert> & Record<string, unknown>;
+        Relationships: [];
+      };
+      transactions: {
+        Row: TransactionRow & Record<string, unknown>;
+        Insert: TransactionInsert & Record<string, unknown>;
+        Update: Partial<TransactionInsert> & Record<string, unknown>;
+        Relationships: [];
+      };
+      transaction_items: {
+        Row: TransactionItemRow & Record<string, unknown>;
+        Insert: Omit<TransactionItemRow, "id"> & { id?: string } & Record<string, unknown>;
+        Update: Partial<Omit<TransactionItemRow, "id">> & Record<string, unknown>;
+        Relationships: [];
+      };
+      returns: {
+        Row: ReturnRow & Record<string, unknown>;
+        Insert: ReturnInsert & Record<string, unknown>;
+        Update: Partial<ReturnInsert> & Record<string, unknown>;
+        Relationships: [];
+      };
+      return_items: {
+        Row: ReturnItemRow & Record<string, unknown>;
+        Insert: ReturnItemInsert & Record<string, unknown>;
+        Update: Partial<ReturnItemInsert> & Record<string, unknown>;
+        Relationships: [];
+      };
+      replacement_items: {
+        Row: ReplacementItemRow & Record<string, unknown>;
+        Insert: ReplacementItemInsert & Record<string, unknown>;
+        Update: Partial<ReplacementItemInsert> & Record<string, unknown>;
+        Relationships: [];
+      };
+      users: {
+        Row: UserRow & Record<string, unknown>;
+        Insert: Omit<UserRow, "id" | "created_at" | "updated_at"> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        } & Record<string, unknown>;
+        Update: Partial<Omit<UserRow, "id">> & Record<string, unknown>;
+        Relationships: [];
+      };
+      plan_purchases: {
+        Row: PlanPurchaseRow & Record<string, unknown>;
+        Insert: PlanPurchaseInsert & Record<string, unknown>;
+        Update: Partial<PlanPurchaseInsert> & Record<string, unknown>;
+        Relationships: [];
+      };
+    };
+    Views: Record<string, never>;
+    Functions: Record<string, never>;
+    Enums: Record<string, never>;
+    CompositeTypes: Record<string, never>;
+  };
 }

@@ -165,6 +165,127 @@ CREATE TABLE dashboard_metrics (
 
 ---
 
+### 8. Product Variants Table (Phase 1: Variants Support)
+Stores product variants (size, color, etc.) for each product.
+
+```sql
+CREATE TABLE product_variants (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  variant_type VARCHAR(50) NOT NULL,       -- 'size', 'color', etc.
+  variant_value VARCHAR(100) NOT NULL,     -- 'M', 'Red', 'Large', etc.
+  sku VARCHAR(50) UNIQUE,                  -- Variant-specific SKU
+  barcode VARCHAR(50) UNIQUE,              -- Variant-specific barcode
+  quantity INT DEFAULT 0,                  -- Stock for this variant
+  price_adjustment DECIMAL(10, 2) DEFAULT 0, -- Extra cost for this variant
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**Indexes:**
+```sql
+CREATE INDEX idx_variants_product ON product_variants(product_id);
+CREATE INDEX idx_variants_barcode ON product_variants(barcode);
+CREATE INDEX idx_variants_sku ON product_variants(sku);
+CREATE INDEX idx_variants_type_value ON product_variants(variant_type, variant_value);
+```
+
+---
+
+### 9. Returns Table (Phase 1: Returns & Replacements)
+Tracks product return transactions.
+
+```sql
+CREATE TABLE returns (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  original_transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+  return_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reason VARCHAR(255),                     -- 'Wrong size', 'Damaged', 'Changed mind', etc.
+  notes TEXT,                              -- Additional notes
+  status VARCHAR(50) DEFAULT 'pending',    -- pending, completed, cancelled
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**Indexes:**
+```sql
+CREATE INDEX idx_returns_transaction ON returns(original_transaction_id);
+CREATE INDEX idx_returns_date ON returns(return_date);
+CREATE INDEX idx_returns_status ON returns(status);
+```
+
+---
+
+### 10. Return Items Table (Phase 1: Items Being Returned)
+Individual items in a return transaction.
+
+```sql
+CREATE TABLE return_items (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  return_id UUID NOT NULL REFERENCES returns(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES products(id),
+  variant_id UUID REFERENCES product_variants(id),  -- Optional: if product has variants
+  quantity INT NOT NULL,
+  refund_amount DECIMAL(10, 2) NOT NULL,  -- Original price × quantity
+  status VARCHAR(50) DEFAULT 'pending',    -- pending, completed, cancelled
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**Indexes:**
+```sql
+CREATE INDEX idx_return_items_return ON return_items(return_id);
+CREATE INDEX idx_return_items_product ON return_items(product_id);
+```
+
+---
+
+### 11. Replacement Items Table (Phase 1: Replacement Selection)
+Replacement items selected by customer.
+
+```sql
+CREATE TABLE replacement_items (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  return_id UUID NOT NULL REFERENCES returns(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES products(id),
+  variant_id UUID REFERENCES product_variants(id),  -- Optional
+  quantity INT NOT NULL,
+  replacement_price DECIMAL(10, 2) NOT NULL,  -- Price of replacement item
+  status VARCHAR(50) DEFAULT 'pending',    -- pending, completed, cancelled
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**Indexes:**
+```sql
+CREATE INDEX idx_replacement_items_return ON replacement_items(return_id);
+CREATE INDEX idx_replacement_items_product ON replacement_items(product_id);
+```
+
+---
+
+### 12. Transactions Table Updates (Phase 1)
+Extended `transactions` table with replacement transaction support.
+
+**New Columns:**
+```sql
+ALTER TABLE transactions
+ADD COLUMN IF NOT EXISTS is_replacement_transaction BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE transactions
+ADD COLUMN IF NOT EXISTS original_return_id UUID REFERENCES returns(id);
+```
+
+**New Indexes:**
+```sql
+CREATE INDEX idx_transactions_is_replacement ON transactions(is_replacement_transaction);
+CREATE INDEX idx_transactions_return_id ON transactions(original_return_id);
+```
+
+---
+
 ## Sample Queries
 
 ### Get Daily Sales
