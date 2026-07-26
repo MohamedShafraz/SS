@@ -102,6 +102,11 @@ export default function ProductsPage() {
       categoryFilter === "all" || product.category === categoryFilter;
     return matchesSearch && matchesCategory;
   });
+  const lowStockCount = products.filter((product) => product.quantity <= 5).length;
+  const inventoryValue = products.reduce(
+    (sum, product) => sum + product.cost * product.quantity,
+    0
+  );
 
   const handleAddProduct = () => {
     setEditingId(null);
@@ -216,28 +221,45 @@ export default function ProductsPage() {
 
   return (
     <MainLayout>
-      <div className="space-y-6">
+      <div className="space-y-5">
         {/* Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Products</h1>
-            <p className="text-gray-600">Manage inventory and product details</p>
+              <p className="text-xs font-semibold uppercase text-slate-500">Inventory Control</p>
+              <h1 className="text-2xl font-bold text-slate-950">Products</h1>
+              <p className="text-sm text-slate-600">Manage stock, pricing, variants, and barcode-ready product records.</p>
           </div>
           <button
             onClick={handleAddProduct}
-            className="btn-success flex items-center gap-2"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
           >
-            <Plus className="w-5 h-5" />
+              <Plus className="h-4 w-4" />
             Add Product
           </button>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs text-slate-500">Visible records</p>
+              <p className="text-lg font-bold text-slate-950">{filteredProducts.length}</p>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs text-slate-500">Low stock</p>
+              <p className="text-lg font-bold text-amber-700">{lowStockCount}</p>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs text-slate-500">Inventory value</p>
+              <p className="text-lg font-bold text-slate-950">{inventoryValue}/=</p>
+            </div>
+          </div>
         </div>
 
         {/* Filters */}
-        <div className="bg-white rounded-lg shadow-md p-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_260px]">
             <input
               type="text"
-              placeholder="Search products..."
+              placeholder="Search name, SKU, barcode, or category"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="input-base"
@@ -258,30 +280,89 @@ export default function ProductsPage() {
         </div>
 
         {/* Products Table */}
-        <div className="bg-white rounded-lg shadow-md overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-100 border-b">
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="grid gap-3 p-3 md:hidden">
+            {loading ? (
+              <p className="py-8 text-center text-sm text-slate-600">Loading products...</p>
+            ) : filteredProducts.length === 0 ? (
+              <div className="py-8 text-center">
+                <p className="font-medium text-slate-700">No products found</p>
+                <p className="mt-1 text-sm text-slate-500">Add a product or adjust filters.</p>
+              </div>
+            ) : (
+              filteredProducts.map((product) => {
+                const margin = product.price
+                  ? (((product.price - product.cost) / product.price) * 100).toFixed(1)
+                  : "0.0";
+                return (
+                  <div key={product.id} className="rounded-md border border-slate-200 p-3">
+                    <div className="flex gap-3">
+                      <img
+                        src={product.image_url && product.image_url.startsWith("data:")
+                          ? product.image_url
+                          : (product.image_url || "https://via.placeholder.com/48?text=No+Image")}
+                        alt={product.name}
+                        className="h-14 w-14 rounded-md object-cover"
+                        onError={(e) => {
+                          e.currentTarget.src = "https://via.placeholder.com/48?text=No+Image";
+                        }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-slate-950">{product.name}</p>
+                            <p className="truncate text-xs text-slate-500">{product.sku || "No SKU"} · {product.category}</p>
+                          </div>
+                          <span className={`rounded px-2 py-1 text-xs font-semibold ${
+                            product.quantity > 20
+                              ? "bg-emerald-50 text-emerald-700"
+                              : product.quantity > 5
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-red-50 text-red-700"
+                          }`}>
+                            {product.quantity}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                          <div><p className="text-slate-500">Price</p><p className="font-semibold">{product.price}/=</p></div>
+                          <div><p className="text-slate-500">Cost</p><p className="font-semibold">{product.cost}/=</p></div>
+                          <div><p className="text-slate-500">Margin</p><p className="font-semibold">{margin}%</p></div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      <button onClick={() => generateBarcodeSticker(product)} className="rounded-md border border-slate-200 px-2 py-2 text-sm font-medium text-blue-700">Barcode</button>
+                      <button onClick={() => handleEditProduct(product)} className="rounded-md border border-slate-200 px-2 py-2 text-sm font-medium text-emerald-700">Edit</button>
+                      <button onClick={() => handleDeleteProduct(product.id)} className="rounded-md border border-slate-200 px-2 py-2 text-sm font-medium text-red-700">Delete</button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full min-w-[820px]">
+              <thead className="border-b bg-slate-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Product
                   </th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Category
                   </th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Price
                   </th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Cost
                   </th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Quantity
                   </th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Margin
                   </th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Actions
                   </th>
                 </tr>

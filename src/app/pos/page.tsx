@@ -11,6 +11,7 @@ import { fetchTransactionWithItems, createReturn, addReturnItems, addReplacement
 
 interface CartItem {
   id: string;
+  product_id: string;
   name: string;
   price: number;
   quantity: number;
@@ -55,6 +56,29 @@ interface TransactionData {
   discount_amount: number;
   payment_method: string;
 }
+
+interface ReceiptData {
+  transactionId: string;
+  items: CartItem[];
+  subtotal: number;
+  discountAmount: number;
+  total: number;
+  paymentMethod: string;
+  createdAt: Date;
+}
+
+const getCartProductId = (item: CartItem) =>
+  item.product_id || (item.variant_id ? item.id.replace(`-${item.variant_id}`, "") : item.id);
+
+const formatReceiptAmount = (value: number) => `LKR ${Number(value || 0).toFixed(2)}`;
+
+const escapeReceiptHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 
 export default function POSPage() {
   return (
@@ -303,7 +327,7 @@ function POSContent() {
       // Step 3: If there are replacements, add them
       if (replacementCart.length > 0) {
         const replacementItems = replacementCart.map((item) => ({
-          product_id: item.variant_id ? item.id.split("-")[0] : item.id,
+          product_id: getCartProductId(item),
           variant_id: item.variant_id || undefined,
           quantity: item.quantity,
           replacement_price: item.price * item.quantity,
@@ -388,12 +412,13 @@ function POSContent() {
             .eq("id", item.variant_id);
         }
       } else {
-        const product = products.find((p) => p.id === item.id);
+        const productId = getCartProductId(item);
+        const product = products.find((p) => p.id === productId);
         if (product) {
           await supabase
             .from("products")
             .update({ quantity: product.quantity - item.quantity })
-            .eq("id", item.id);
+            .eq("id", productId);
         }
       }
     }
@@ -491,6 +516,7 @@ function POSContent() {
         ...prevCart,
         {
           id: cartItemId,
+          product_id: product.id,
           name: product.name,
           price: variantPrice,
           quantity: 1,
@@ -530,6 +556,7 @@ function POSContent() {
         ...prevCart,
         {
           id: product.id,
+          product_id: product.id,
           name: product.name,
           price: product.price,
           quantity: 1,
@@ -559,7 +586,7 @@ function POSContent() {
       maxQty = variant?.quantity || 0;
     } else {
       // Find product stock
-      const product = products.find((p) => p.id === id);
+      const product = products.find((p) => p.id === (cartItem ? getCartProductId(cartItem) : id));
       maxQty = product?.quantity || 0;
     }
 
@@ -660,12 +687,20 @@ function POSContent() {
   };
 
   const { subtotal, globalDiscount, total } = calculateTotals();
+  const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const replacementItemCount = replacementCart.reduce((sum, item) => sum + item.quantity, 0);
+  const replacementTotal = replacementCart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const selectedReturnTotal = originalItems
+    .filter((item) => selectedReturnItems.has(item.id))
+    .reduce((sum, item) => sum + item.subtotal, 0);
 
   const handleCheckout = async () => {
     if (cart.length === 0) {
       toast.error("Cart is empty");
       return;
     }
+
+    const receiptItems = cart.map((item) => ({ ...item }));
 
     if (paymentMethod === "stripe") {
       try {
@@ -701,6 +736,8 @@ function POSContent() {
     }
 
     try {
+      let completedTransactionId = "";
+
       // Save transaction to Supabase
       const { data: transactionData, error: transactionError } = await supabase
         .from("transactions")
@@ -729,6 +766,7 @@ function POSContent() {
       // Save transaction items
       if (transactionData && transactionData.length > 0) {
         const transactionId = transactionData[0].id;
+        completedTransactionId = transactionId;
         const items = cart.map((item) => {
           const itemTotal = item.price * item.quantity;
           let itemDiscount = 0;
@@ -741,7 +779,7 @@ function POSContent() {
           
           return {
             transaction_id: transactionId,
-            product_id: item.variant_id ? item.id.split("-")[0] : item.id, // Extract product ID if variant
+            product_id: getCartProductId(item),
             quantity: item.quantity,
             unit_price: item.price,
             discount: itemDiscount,
@@ -780,13 +818,14 @@ function POSContent() {
             }
           } else {
             // Update product stock
-            const product = products.find((p) => p.id === cartItem.id);
+            const productId = getCartProductId(cartItem);
+            const product = products.find((p) => p.id === productId);
             if (product) {
               const newQuantity = product.quantity - cartItem.quantity;
               const { error: updateError } = await supabase
                 .from("products")
                 .update({ quantity: newQuantity })
-                .eq("id", cartItem.id);
+                .eq("id", productId);
 
               if (updateError) {
                 console.error("Error updating product quantity:", updateError);
@@ -806,98 +845,263 @@ function POSContent() {
       barcodeInputRef.current?.focus();
 
       // Trigger print after successful checkout
-      handlePrint();
+      handlePrint({
+        transactionId: completedTransactionId,
+        items: receiptItems,
+        subtotal,
+        discountAmount: globalDiscount,
+        total,
+        paymentMethod,
+        createdAt: new Date(),
+      });
     } catch (error) {
       console.error("Error:", error);
       toast.error("Error processing checkout");
     }
   };
 
-  const handlePrint = () => {
-    toast.success("Receipt printed!");
+  const handlePrint = (receipt?: ReceiptData) => {
+    const receiptData =
+      receipt ??
+      (cart.length > 0
+        ? {
+            transactionId: "Draft sale",
+            items: cart,
+            subtotal,
+            discountAmount: globalDiscount,
+            total,
+            paymentMethod,
+            createdAt: new Date(),
+          }
+        : null);
+
+    if (!receiptData) {
+      toast.error("Add items before printing a receipt");
+      return;
+    }
+
+    const receiptWindow = window.open("", "mshpos-receipt", "width=420,height=720");
+
+    if (!receiptWindow) {
+      toast.error("Allow pop-ups to print receipts");
+      return;
+    }
+
+    const itemRows = receiptData.items
+      .map((item) => {
+        const itemTotal = Number(item.price || 0) * Number(item.quantity || 0);
+        const itemDiscount =
+          item.discountType === "percentage"
+            ? (itemTotal * Number(item.discount || 0)) / 100
+            : Number(item.discount || 0);
+        const lineTotal = Math.max(0, itemTotal - itemDiscount);
+        const variantLabel =
+          item.variant_type && item.variant_value
+            ? `<div class="muted">${escapeReceiptHtml(item.variant_type)}: ${escapeReceiptHtml(item.variant_value)}</div>`
+            : "";
+
+        return `
+          <tr>
+            <td>
+              <strong>${escapeReceiptHtml(item.name)}</strong>
+              ${variantLabel}
+              ${itemDiscount > 0 ? `<div class="muted">Discount ${formatReceiptAmount(itemDiscount)}</div>` : ""}
+            </td>
+            <td class="center">${item.quantity}</td>
+            <td class="right">${formatReceiptAmount(lineTotal)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    receiptWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>MSHPOS Receipt</title>
+          <style>
+            @page { size: 80mm auto; margin: 6mm; }
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              color: #111827;
+              font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+              font-size: 12px;
+              line-height: 1.45;
+            }
+            .receipt { width: 100%; max-width: 302px; margin: 0 auto; }
+            .center { text-align: center; }
+            .right { text-align: right; }
+            .muted { color: #6b7280; font-size: 11px; }
+            .brand { font-size: 20px; font-weight: 800; letter-spacing: 0; }
+            .rule { border-top: 1px dashed #9ca3af; margin: 10px 0; }
+            table { width: 100%; border-collapse: collapse; }
+            th { color: #4b5563; font-size: 10px; text-transform: uppercase; }
+            td, th { padding: 5px 0; vertical-align: top; }
+            .totals div { display: flex; justify-content: space-between; gap: 12px; margin: 3px 0; }
+            .total { font-size: 15px; font-weight: 800; }
+            .footer { margin-top: 14px; text-align: center; color: #374151; }
+          </style>
+        </head>
+        <body>
+          <main class="receipt">
+            <section class="center">
+              <div class="brand">MSHPOS</div>
+              <div class="muted">Retail point of sale</div>
+            </section>
+
+            <div class="rule"></div>
+
+            <section>
+              <div><strong>Receipt:</strong> ${escapeReceiptHtml(receiptData.transactionId || "N/A")}</div>
+              <div><strong>Date:</strong> ${escapeReceiptHtml(receiptData.createdAt.toLocaleString())}</div>
+              <div><strong>Payment:</strong> ${escapeReceiptHtml(receiptData.paymentMethod.toUpperCase())}</div>
+            </section>
+
+            <div class="rule"></div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th align="left">Item</th>
+                  <th class="center">Qty</th>
+                  <th class="right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>${itemRows}</tbody>
+            </table>
+
+            <div class="rule"></div>
+
+            <section class="totals">
+              <div><span>Subtotal</span><strong>${formatReceiptAmount(receiptData.subtotal)}</strong></div>
+              <div><span>Discount</span><strong>${receiptData.discountAmount > 0 ? formatReceiptAmount(receiptData.discountAmount) : "-"}</strong></div>
+              <div class="total"><span>Total</span><span>${formatReceiptAmount(receiptData.total)}</span></div>
+            </section>
+
+            <div class="rule"></div>
+
+            <section class="footer">
+              <div>Thank you for shopping with us.</div>
+              <div class="muted">Powered by MSHPOS</div>
+            </section>
+          </main>
+          <script>
+            window.onload = () => {
+              window.focus();
+              window.print();
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    receiptWindow.document.close();
   };
 
   return (
     <MainLayout>
-      {/* Mode Switcher Tabs */}
-      <div className="mb-4 flex gap-2 border-b">
-        <button
-          onClick={() => setMode("sale")}
-          className={`px-4 py-2 font-semibold transition-colors ${
-            mode === "sale"
-              ? "text-blue-600 border-b-2 border-blue-600"
-              : "text-gray-600 hover:text-gray-900"
-          }`}
-        >
-          <ShoppingCart className="w-4 h-4 inline mr-2" />
-          Sale
-        </button>
-        <button
-          onClick={() => setMode("returns")}
-          className={`px-4 py-2 font-semibold transition-colors ${
-            mode === "returns"
-              ? "text-blue-600 border-b-2 border-blue-600"
-              : "text-gray-600 hover:text-gray-900"
-          }`}
-        >
-          <RotateCcw className="w-4 h-4 inline mr-2" />
-          Returns & Replacements
-        </button>
-      </div>
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 border-b border-gray-200 pb-4 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Cashier Workstation</p>
+            <h1 className="text-2xl font-bold text-gray-950">Point of Sale</h1>
+          </div>
 
-      {/* Sale Mode */}
-      {mode === "sale" && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full overflow-hidden">
+          <div className="grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1 sm:inline-grid">
+            <button
+              onClick={() => setMode("sale")}
+              className={`flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition-colors ${
+                mode === "sale"
+                  ? "bg-white text-blue-700 shadow-sm"
+                  : "text-gray-600 hover:bg-white/70 hover:text-gray-900"
+              }`}
+            >
+              <ShoppingCart className="h-4 w-4" />
+              Sale
+            </button>
+            <button
+              onClick={() => setMode("returns")}
+              className={`flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition-colors ${
+                mode === "returns"
+                  ? "bg-white text-blue-700 shadow-sm"
+                  : "text-gray-600 hover:bg-white/70 hover:text-gray-900"
+              }`}
+            >
+              <RotateCcw className="h-4 w-4" />
+              Returns
+            </button>
+          </div>
+        </div>
+
+        {/* Sale Mode */}
+        {mode === "sale" && (
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
         {/* Products Section */}
-        <div className="lg:col-span-2 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden">
-          <div className="p-4 border-b">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Products
-            </h2>
-            <div className="flex gap-2">
-              <input
-                ref={barcodeInputRef}
-                type="text"
-                placeholder="Scan barcode or search..."
-                value={barcodeInput}
-                onChange={(e) => handleSearchFilter(e.target.value)}
-                onKeyPress={handleBarcodeInput}
-                className="input-base flex-1"
-              />
-              <button className="btn-primary">
-                <Barcode className="w-5 h-5" />
-              </button>
+        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 bg-gray-50 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-gray-950">Product Lookup</h2>
+                <p className="text-xs text-gray-500">Scan barcode, SKU, name, or category</p>
+              </div>
+              <div className="flex w-full gap-2 lg:max-w-xl">
+                <div className="relative flex-1">
+                  <Barcode className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <input
+                    ref={barcodeInputRef}
+                    type="text"
+                    placeholder="Scan or search inventory"
+                    value={barcodeInput}
+                    onChange={(e) => handleSearchFilter(e.target.value)}
+                    onKeyDown={handleBarcodeInput}
+                    className="w-full rounded-md border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => barcodeInputRef.current?.focus()}
+                  className="rounded-md bg-gray-900 px-3 py-2 text-white hover:bg-gray-800"
+                  title="Focus scanner field"
+                >
+                  <Barcode className="h-5 w-5" />
+                </button>
+              </div>
             </div>
           </div>
 
           {/* Product Grid */}
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="max-h-[calc(100vh-260px)] min-h-[420px] overflow-y-auto p-3 sm:p-4">
             {loading ? (
-              <div className="flex items-center justify-center h-full">
-                <p className="text-gray-600">Loading products...</p>
+              <div className="flex min-h-[360px] items-center justify-center">
+                <p className="text-sm text-gray-600">Loading products...</p>
               </div>
             ) : products.length === 0? (
-              <div className="flex items-center justify-center h-full">
+              <div className="flex min-h-[360px] items-center justify-center">
                 <div className="text-center">
-                  <p className="text-gray-600 mb-2">No products available</p>
-                  <p className="text-sm text-gray-500">Add products from the Products page</p>
+                  <p className="font-medium text-gray-700">No products available</p>
+                  <p className="mt-1 text-sm text-gray-500">Add products from the Products page</p>
                 </div>
               </div>
             ) : filteredProducts.length === 0 ? (
-              <div className="flex items-center justify-center h-full">
+              <div className="flex min-h-[360px] items-center justify-center">
                 <div className="text-center">
-                  <p className="text-gray-600 mb-2">No products found</p>
-                  <p className="text-sm text-gray-500">Try a different search term</p>
+                  <p className="font-medium text-gray-700">No products found</p>
+                  <p className="mt-1 text-sm text-gray-500">Try another barcode, SKU, or category</p>
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2 2xl:grid-cols-3">
                 {filteredProducts.map((product) => (
                   <div
                     key={product.id}
-                    className="card-hover p-3 text-left relative group rounded-lg bg-white shadow-md hover:shadow-lg transition-shadow"
+                    className="group grid grid-cols-[72px_minmax(0,1fr)] gap-3 rounded-md border border-gray-200 bg-white p-2 hover:border-blue-300 hover:bg-blue-50/40"
                   >
-                    <div className="w-full h-32 bg-gray-200 rounded mb-3 overflow-hidden relative">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProduct(product)}
+                      className="relative h-[72px] overflow-hidden rounded-md bg-gray-100"
+                      title="View details"
+                    >
                       <img
                         src={product.image_url && product.image_url.startsWith('data:') 
                           ? product.image_url 
@@ -906,35 +1110,51 @@ function POSContent() {
                           e.currentTarget.src = "https://via.placeholder.com/150?text=No+Image";
                         }}
                         alt={product.name}
-                        className="w-full h-full object-cover"
+                        className="h-full w-full object-cover"
                       />
-                      <button
-                        onClick={() => setSelectedProduct(product)}
-                        className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-0 hover:bg-opacity-40 transition-all rounded"
-                        title="View Details"
-                      >
-                        <Eye className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </button>
-                    </div>
-                    <h3 className="font-semibold text-sm text-gray-900 line-clamp-2">
-                      {product.name}
-                    </h3>
-                    <p className="text-xs text-gray-600 mb-2">{product.category}</p>
-                    <p className="text-lg font-bold text-blue-600">{product.price}/=</p>
-                    <button
-                      onClick={() => {
-                        if (product.variants && product.variants.length > 0) {
-                          setPendingProduct(product);
-                          setShowVariantSelector(true);
-                        } else {
-                          addToCart(product);
-                          toast.success(`Added ${product.name}`);
-                        }
-                      }}
-                      className="mt-3 w-full px-3 py-2 bg-green-600 text-white text-sm rounded font-medium hover:bg-green-700 transition-colors"
-                    >
-                      Add to Cart
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/30">
+                        <Eye className="h-5 w-5 text-white opacity-0 group-hover:opacity-100" />
+                      </span>
                     </button>
+                    <div className="min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <h3 className="line-clamp-1 text-sm font-semibold text-gray-950">{product.name}</h3>
+                          <p className="mt-0.5 line-clamp-1 text-xs text-gray-500">
+                            {product.category} - SKU {product.sku || "N/A"}
+                          </p>
+                        </div>
+                        <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-semibold ${
+                          product.quantity > 10
+                            ? "bg-green-50 text-green-700"
+                            : product.quantity > 0
+                            ? "bg-yellow-50 text-yellow-700"
+                            : "bg-red-50 text-red-700"
+                        }`}>
+                          {product.quantity}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex items-end justify-between gap-2">
+                        <div>
+                          <p className="text-xs text-gray-500">Unit price</p>
+                          <p className="text-lg font-bold text-gray-950">{product.price}/=</p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            if (product.variants && product.variants.length > 0) {
+                              setPendingProduct(product);
+                              setShowVariantSelector(true);
+                            } else {
+                              addToCart(product);
+                              toast.success(`Added ${product.name}`);
+                            }
+                          }}
+                          className="rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -943,22 +1163,38 @@ function POSContent() {
         </div>
 
         {/* Cart Section */}
-        <div className="lg:col-span-1 h-fit flex flex-col bg-white rounded-lg shadow-lg overflow-hidden">
+        <div className="h-fit overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm xl:sticky xl:top-24">
           {/* Cart Items */}
           <div className="flex-1 overflow-y-auto border-b">
             <div className="p-4">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Cart</h2>
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-gray-950">Current Sale</h2>
+                  <p className="text-xs text-gray-500">{cartItemCount} items in cart</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setCart([]);
+                    setDiscount(0);
+                    setDiscountType("lkr");
+                  }}
+                  className="flex items-center gap-1 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                >
+                  <X className="h-4 w-4" />
+                  Clear
+                </button>
+              </div>
               {cart.length === 0 ? (
-                <div className="text-center text-gray-500 py-8">
-                  <ShoppingCart className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                  <p>Cart is empty</p>
+                <div className="flex min-h-[200px] flex-col items-center justify-center rounded-md border border-dashed border-gray-300 text-center text-gray-500">
+                  <ShoppingCart className="mb-2 h-9 w-9 opacity-50" />
+                  <p className="text-sm font-medium">Cart is empty</p>
                 </div>
               ) : (
                 <div className="space-y-3">
                   {cart.map((item) => (
                     <div
                       key={item.id}
-                      className="bg-gray-50 rounded-lg p-3 border border-gray-200"
+                      className="rounded-md border border-gray-200 bg-gray-50 p-3"
                     >
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex-1">
@@ -973,7 +1209,8 @@ function POSContent() {
                         </div>
                         <button
                           onClick={() => removeFromCart(item.id)}
-                          className="text-red-600 hover:text-red-700 ml-2"
+                          className="ml-2 rounded p-1 text-red-600 hover:bg-red-50"
+                          title="Remove item"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -989,7 +1226,7 @@ function POSContent() {
                           onChange={(e) =>
                             updateQuantity(item.id, parseInt(e.target.value))
                           }
-                          className="w-12 px-2 py-1 border border-gray-300 rounded text-sm"
+                          className="w-16 rounded-md border border-gray-300 px-2 py-1 text-sm"
                         />
                       </div>
                       <div className="flex gap-2 mb-2">
@@ -1014,14 +1251,14 @@ function POSContent() {
 
                             updateDiscount(item.id, validDiscount);
                           }}
-                          className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
+                          className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm"
                         />
                         <select
                           value={item.discountType}
                           onChange={(e) =>
                             updateDiscountType(item.id, e.target.value as "lkr" | "percentage")
                           }
-                          className="px-2 py-1 border border-gray-300 rounded text-sm bg-white min-w-fit"
+                          className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm"
                         >
                           <option value="lkr">/=</option>
                           <option value="percentage">%</option>
@@ -1050,7 +1287,7 @@ function POSContent() {
           </div>
 
           {/* Totals Section */}
-          <div className="p-4 bg-gray-50 border-t">
+          <div className="border-t bg-gray-50 p-4">
             <div className="space-y-2 mb-4">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Subtotal:</span>
@@ -1108,7 +1345,7 @@ function POSContent() {
               </div>
               <div className="border-t-2 pt-2 flex justify-between">
                 <span className="font-bold text-gray-900">Total:</span>
-                <span className="text-2xl font-bold text-blue-600">{Math.round(total)}/=</span>
+                <span className="text-3xl font-bold text-blue-700">{Math.round(total)}/=</span>
               </div>
             </div>
 
@@ -1134,28 +1371,24 @@ function POSContent() {
               <button
                 onClick={handleCheckout}
                 disabled={stripeBusy}
-                className="btn-success flex-1 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                className="flex flex-1 items-center justify-center gap-2 rounded-md bg-green-600 px-4 py-3 text-sm font-bold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 <Check className="w-5 h-5" />
                 {paymentMethod === "stripe" ? "Pay with Stripe" : "Checkout"}
               </button>
               <button
-                onClick={handlePrint}
-                className="btn-primary flex-1 flex items-center justify-center gap-2"
+                onClick={() => handlePrint()}
+                className="flex flex-1 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-100"
               >
                 <Printer className="w-5 h-5" />
                 Print
               </button>
               <button
-                onClick={() => {
-                  setCart([]);
-                  setDiscount(0);
-                  setDiscountType("lkr");
-                }}
-                className="btn-secondary flex-1 flex items-center justify-center gap-2"
+                onClick={() => barcodeInputRef.current?.focus()}
+                className="flex flex-1 items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-100"
               >
-                <X className="w-5 h-5" />
-                Clear
+                <Barcode className="w-5 h-5" />
+                Scan
               </button>
             </div>
           </div>
@@ -1163,15 +1396,16 @@ function POSContent() {
       </div>
       )}
 
-      {/* Returns Mode */}
-      {mode === "returns" && (
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full overflow-hidden">
+        {/* Returns Mode */}
+        {mode === "returns" && (
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] 2xl:grid-cols-[minmax(0,1fr)_360px_360px]">
         {/* Transaction Lookup Section */}
-        <div className="lg:col-span-2 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden">
-          <div className="p-4 border-b">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Returns & Replacements
+        <div className="flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 bg-gray-50 p-4">
+            <h2 className="text-base font-semibold text-gray-950">
+              Original Transaction
             </h2>
+            <p className="mb-4 text-xs text-gray-500">Lookup receipt, select returned lines, capture reason</p>
 
             {!originalTransaction ? (
               <div className="space-y-3">
@@ -1185,7 +1419,8 @@ function POSContent() {
                   />
                   <button
                     onClick={handleLookupTransaction}
-                    className="btn-primary"
+                    className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+                    title="Load transaction"
                   >
                     <Check className="w-5 h-5" />
                   </button>
@@ -1193,15 +1428,19 @@ function POSContent() {
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <div className="grid gap-3 rounded-md border border-blue-200 bg-blue-50 p-3 sm:grid-cols-2">
+                  <div>
                   <p className="text-sm text-gray-600">Transaction Date</p>
                   <p className="font-semibold text-gray-900">
                     {new Date(originalTransaction.transaction_date).toLocaleDateString()}
                   </p>
+                  </div>
+                  <div>
                   <p className="text-sm text-gray-600 mt-2">Total Amount</p>
                   <p className="font-bold text-blue-600 text-lg">
                     {originalTransaction.total_amount}/=
                   </p>
+                  </div>
                 </div>
 
                 <div className="flex gap-2">
@@ -1225,7 +1464,11 @@ function POSContent() {
                 {originalItems.map((item) => (
                   <div
                     key={item.id}
-                    className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200"
+                    className={`flex items-center gap-3 rounded-md border p-3 ${
+                      selectedReturnItems.has(item.id)
+                        ? "border-blue-400 bg-blue-50"
+                        : "border-gray-200 bg-gray-50 hover:border-gray-300"
+                    }`}
                   >
                     <input
                       type="checkbox"
@@ -1238,7 +1481,7 @@ function POSContent() {
                         {item.products?.name || "Product"}
                       </p>
                       <p className="text-xs text-gray-600">
-                        Qty: {item.quantity} × {item.unit_price}/= = {item.subtotal}/=
+                        Qty: {item.quantity} x {item.unit_price}/= = {item.subtotal}/=
                       </p>
                     </div>
                   </div>
@@ -1246,12 +1489,12 @@ function POSContent() {
               </div>
 
               {selectedReturnItems.size > 0 && (
-                <div className="mt-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                <div className="mt-4 rounded-md border border-yellow-200 bg-yellow-50 p-3">
                   <p className="text-sm text-gray-600">Return Reason *</p>
                   <select
                     value={returnReason}
                     onChange={(e) => setReturnReason(e.target.value)}
-                    className="w-full mt-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                    className="mt-1 w-full rounded-md border border-yellow-300 bg-white px-3 py-2 text-sm"
                   >
                     <option value="">Select reason...</option>
                     <option value="Wrong size">Wrong size</option>
@@ -1266,7 +1509,7 @@ function POSContent() {
                     value={returnNotes}
                     onChange={(e) => setReturnNotes(e.target.value)}
                     placeholder="Additional notes..."
-                    className="w-full mt-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                    className="mt-1 w-full rounded-md border border-yellow-300 bg-white px-3 py-2 text-sm"
                     rows={2}
                   />
                 </div>
@@ -1276,23 +1519,24 @@ function POSContent() {
         </div>
 
         {/* Replacement Products Section */}
-        <div className="lg:col-span-1 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden">
-          <div className="p-4 border-b">
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">
-              Available Products
+        <div className="flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 bg-gray-50 p-4">
+            <h2 className="text-base font-semibold text-gray-950">
+              Replacement Picker
             </h2>
+            <p className="mb-3 text-xs text-gray-500">Add exchange items when needed</p>
             <input
               type="text"
               placeholder="Search replacements..."
               value={barcodeInput}
               onChange={(e) => handleSearchFilter(e.target.value)}
-              className="input-base text-sm"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
             />
           </div>
 
-          <div className="flex-1 overflow-y-auto p-2">
+          <div className="max-h-[560px] overflow-y-auto p-3">
             <div className="grid grid-cols-1 gap-2">
-              {filteredProducts.slice(0, 20).map((product) => (
+              {filteredProducts.slice(0, 30).map((product) => (
                 <button
                   key={product.id}
                   onClick={() => {
@@ -1315,6 +1559,7 @@ function POSContent() {
                         // Add new item
                         const item: CartItem = {
                           id: product.id,
+                          product_id: product.id,
                           name: product.name,
                           price: product.price,
                           quantity: 1,
@@ -1326,12 +1571,17 @@ function POSContent() {
                       }
                     }
                   }}
-                  className="p-2 text-left rounded bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-400 transition-colors"
+                  className="rounded-md border border-gray-200 bg-gray-50 p-3 text-left hover:border-blue-300 hover:bg-blue-50"
                 >
-                  <p className="font-medium text-sm text-gray-900 line-clamp-1">
-                    {product.name}
-                  </p>
-                  <p className="text-xs text-gray-600">{product.price}/=</p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="line-clamp-1 text-sm font-semibold text-gray-950">
+                        {product.name}
+                      </p>
+                      <p className="text-xs text-gray-500">{product.category} - Stock {product.quantity}</p>
+                    </div>
+                    <span className="shrink-0 text-sm font-bold text-gray-950">{product.price}/=</span>
+                  </div>
                 </button>
               ))}
             </div>
@@ -1339,30 +1589,26 @@ function POSContent() {
         </div>
 
         {/* Replacement Cart Section */}
-        <div className="lg:col-span-1 flex flex-col bg-white rounded-lg shadow-lg overflow-hidden h-fit">
-          <div className="p-4 border-b">
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">
-              Replacement Cart
+        <div className="h-fit overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm 2xl:sticky 2xl:top-24">
+          <div className="border-b border-gray-200 bg-gray-50 p-4">
+            <h2 className="text-base font-semibold text-gray-950">
+              Return Settlement
             </h2>
-            {replacementCart.length > 0 && (
-              <p className="text-xs text-gray-600">
-                Total: {replacementCart.reduce((sum, item) => sum + item.price * item.quantity, 0)}/=
-              </p>
-            )}
+            <p className="text-xs text-gray-500">{replacementItemCount} replacement items</p>
           </div>
 
           {/* Replacement Cart Items */}
           <div className="flex-1 overflow-y-auto p-4">
             {replacementCart.length === 0 ? (
-              <p className="text-gray-500 text-sm text-center py-8">
-                Add replacement items
-              </p>
+              <div className="flex min-h-[180px] items-center justify-center rounded-md border border-dashed border-gray-300 text-center text-sm text-gray-500">
+                No replacement items
+              </div>
             ) : (
               <div className="space-y-2">
                 {replacementCart.map((item) => (
                   <div
                     key={item.id}
-                    className="p-2 bg-gray-50 rounded border border-gray-200 text-sm"
+                    className="rounded-md border border-gray-200 bg-gray-50 p-3 text-sm"
                   >
                     <div className="flex justify-between items-start mb-1">
                       <p className="font-medium text-gray-900 line-clamp-1">
@@ -1374,7 +1620,8 @@ function POSContent() {
                             replacementCart.filter((i) => i.id !== item.id)
                           )
                         }
-                        className="text-red-600 hover:text-red-700"
+                        className="rounded p-1 text-red-600 hover:bg-red-50"
+                        title="Remove replacement"
                       >
                         <Trash2 className="w-3 h-3" />
                       </button>
@@ -1391,7 +1638,7 @@ function POSContent() {
                           )
                         );
                       }}
-                      className="w-full px-1 py-1 border border-gray-300 rounded text-xs mb-1"
+                      className="mb-1 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
                     />
                     <div className="flex justify-between text-xs text-gray-600">
                       <span>{item.price * item.quantity}/=</span>
@@ -1402,27 +1649,47 @@ function POSContent() {
             )}
           </div>
 
+          <div className="border-t bg-gray-50 p-4">
+            <div className="mb-4 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Selected refund</span>
+                <span className="font-semibold text-gray-900">{selectedReturnTotal}/=</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Replacement value</span>
+                <span className="font-semibold text-gray-900">{replacementTotal}/=</span>
+              </div>
+              <div className="flex items-end justify-between border-t border-gray-300 pt-3">
+                <span className="font-bold text-gray-950">Net difference</span>
+                <span className={`text-2xl font-bold ${replacementTotal - selectedReturnTotal > 0 ? "text-blue-700" : "text-green-700"}`}>
+                  {replacementTotal - selectedReturnTotal}/=
+                </span>
+              </div>
+            </div>
+
           {/* Action Buttons */}
-          <div className="border-t p-4 space-y-2">
+          <div className="space-y-2">
             <button
               onClick={handleProcessReturn}
               disabled={selectedReturnItems.size === 0 || !returnReason.trim()}
-              className="w-full px-4 py-3 bg-green-600 text-white font-semibold text-sm rounded hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex w-full items-center justify-center gap-2 rounded-md bg-green-600 px-4 py-3 text-sm font-bold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Check className="w-4 h-4 inline mr-1" />
+              <Check className="w-4 h-4" />
               Process Return
             </button>
             <button
               onClick={resetReturnsMode}
-              className="w-full px-4 py-2 bg-gray-400 text-white text-sm rounded hover:bg-gray-500 transition-colors"
+              className="flex w-full items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
             >
-              <X className="w-4 h-4 inline mr-1" />
+              <X className="w-4 h-4" />
               Cancel
             </button>
+          </div>
           </div>
         </div>
       </div>
       )}
+      </div>
 
       {/* Product Details Modal */}
       {selectedProduct && (
@@ -1599,6 +1866,7 @@ function POSContent() {
                           const variantPrice = pendingProduct.price + variant.price_adjustment;
                           const newItem: CartItem = {
                             id: cartItemId,
+                            product_id: pendingProduct.id,
                             name: pendingProduct.name,
                             price: variantPrice,
                             quantity: 1,

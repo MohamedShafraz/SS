@@ -354,17 +354,19 @@ export default function Dashboard() {
 
   return (
     <MainLayout>
-      <div className="space-y-8">
+      <div className="space-y-5">
         {/* Page Header */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-            <p className="text-gray-600">Sales, profit, and inventory overview</p>
+              <p className="text-xs font-semibold uppercase text-slate-500">Operations Overview</p>
+              <h1 className="text-2xl font-bold text-slate-950">Dashboard</h1>
+              <p className="text-sm text-slate-600">Sales, margin, category mix, and inventory value at a glance.</p>
           </div>
 
           {/* Filters - Only show for authenticated users */}
           {authContext?.isAuthenticated && (
-            <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
+              <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:w-auto">
               <select
                 value={dateFilter}
                 onChange={(e) => setDateFilter(e.target.value)}
@@ -390,33 +392,34 @@ export default function Dashboard() {
               </select>
             </div>
           )}
+          </div>
         </div>
 
         {/* Metrics Cards */}
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {[1, 2, 3, 4].map((_, i) => (
-              <div key={i} className="card h-32 bg-gray-100 animate-pulse"></div>
+              <div key={i} className="h-28 rounded-lg border border-slate-200 bg-white p-4 shadow-sm animate-pulse"></div>
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {metrics.map((metric, index) => {
               const Icon = metric.icon;
               return (
-                <div key={index} className="card">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className={`p-3 rounded-lg ${metric.color}`}>
+                <div key={index} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="mb-4 flex items-start justify-between">
+                    <div className={`rounded-md p-2.5 ${metric.color}`}>
                       <Icon className={`w-6 h-6 ${metric.textColor}`} />
                     </div>
                     {/* <span className="text-green-600 text-sm font-semibold">
                       {metric.change}
                     </span> */}
                   </div>
-                  <h3 className="text-gray-600 text-sm font-medium mb-1">
+                  <h3 className="mb-1 text-sm font-medium text-slate-500">
                     {metric.title}
                   </h3>
-                  <p className="text-2xl font-bold text-gray-900">
+                  <p className="text-2xl font-bold text-slate-950">
                     {metric.value}
                   </p>
                 </div>
@@ -426,13 +429,14 @@ export default function Dashboard() {
         )}
 
         {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
           {/* Sales vs Profit Chart */}
-          <div className="card lg:col-span-2">
-            <h2 className="text-lg font-semibold text-gray-900 mb-6">
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm xl:col-span-2">
+            <h2 className="mb-4 text-base font-semibold text-slate-950">
               Sales & Profit Trend
             </h2>
-            <ResponsiveContainer width="100%" height={300}>
+            <div className="h-[280px] sm:h-[320px]">
+            <ResponsiveContainer width="100%" height="100%">
               <LineChart data={salesData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
@@ -453,11 +457,12 @@ export default function Dashboard() {
                 />
               </LineChart>
             </ResponsiveContainer>
+            </div>
           </div>
 
           {/* Category Distribution */}
-          <div className="card">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-base font-semibold text-slate-950">
               Sales by Category
             </h2>
             
@@ -469,14 +474,15 @@ export default function Dashboard() {
                     className="w-4 h-4 rounded"
                     style={{ backgroundColor: COLORS[index % COLORS.length] }}
                   ></div>
-                  <span className="text-sm text-gray-700 flex-1">{entry.name}</span>
-                  <span className="text-sm font-semibold text-gray-900">{entry.value}%</span>
+                  <span className="flex-1 text-sm text-slate-700">{entry.name}</span>
+                  <span className="text-sm font-semibold text-slate-950">{entry.value}%</span>
                 </div>
               ))}
             </div>
 
             {/* Pie Chart */}
-            <ResponsiveContainer width="100%" height={250}>
+            <div className="h-[240px]">
+            <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={categoryData}
@@ -494,15 +500,17 @@ export default function Dashboard() {
                 <Tooltip formatter={(value) => `${value}%`} />
               </PieChart>
             </ResponsiveContainer>
+            </div>
           </div>
         </div>
 
         {/* Daily Sales Chart */}
-        <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-6">
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-4 text-base font-semibold text-slate-950">
             Daily Sales
           </h2>
-          <ResponsiveContainer width="100%" height={300}>
+          <div className="h-[280px] sm:h-[320px]">
+          <ResponsiveContainer width="100%" height="100%">
             <BarChart data={salesData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" />
@@ -513,6 +521,7 @@ export default function Dashboard() {
               <Bar dataKey="profit" fill="#10b981" />
             </BarChart>
           </ResponsiveContainer>
+          </div>
         </div>
       </div>
     </MainLayout>

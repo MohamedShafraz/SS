@@ -99,53 +99,97 @@ export default function TransactionsPage() {
 
   return (
     <MainLayout>
-      <div className="space-y-6">
+      <div className="space-y-5">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Transactions</h1>
-          <p className="text-gray-600">View and manage all sales transactions</p>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase text-slate-500">Sales Ledger</p>
+          <h1 className="text-2xl font-bold text-slate-950">Transactions</h1>
+          <p className="text-sm text-slate-600">Review receipts, tenders, and daily sales activity.</p>
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="card">
-            <h3 className="text-gray-600 text-sm font-medium mb-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <h3 className="text-sm font-medium text-slate-500">
               Total Transactions
             </h3>
-            <p className="text-3xl font-bold text-gray-900">
+            <p className="mt-2 text-3xl font-bold text-slate-950">
               {totalTransactions}
             </p>
           </div>
-          <div className="card">
-            <h3 className="text-gray-600 text-sm font-medium mb-2">
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <h3 className="text-sm font-medium text-slate-500">
               Total Sales
             </h3>
-            <p className="text-3xl font-bold text-green-600">{totalSales}/=</p>
+            <p className="mt-2 text-3xl font-bold text-emerald-700">{totalSales}/=</p>
           </div>
         </div>
 
         {/* Transactions Table */}
-        <div className="bg-white rounded-lg shadow-md overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-100 border-b">
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="grid gap-3 p-3 md:hidden">
+            {loading ? (
+              <p className="py-8 text-center text-sm text-slate-600">Loading transactions...</p>
+            ) : filteredTransactions.length === 0 ? (
+              <div className="py-8 text-center">
+                <p className="font-medium text-slate-700">No transactions found</p>
+                <p className="mt-1 text-sm text-slate-500">Sales will appear here after checkout.</p>
+              </div>
+            ) : (
+              filteredTransactions.map((transaction) => (
+                <div key={transaction.id} className="rounded-md border border-slate-200 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-slate-950">{transaction.id}</p>
+                      <p className="mt-1 text-xs text-slate-500">{transaction.transaction_date}</p>
+                    </div>
+                    <span
+                      className={`rounded-full px-2 py-1 text-xs font-semibold ${
+                        transaction.payment_method === "cash"
+                          ? "bg-emerald-50 text-emerald-700"
+                          : transaction.payment_method === "card"
+                          ? "bg-blue-50 text-blue-700"
+                          : "bg-purple-50 text-purple-700"
+                      }`}
+                    >
+                      {transaction.payment_method}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-slate-500">Amount</p>
+                      <p className="text-xl font-bold text-slate-950">{transaction.total_amount}/=</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => setSelectedTransaction(transaction)} className="rounded-md border border-slate-200 p-2 text-blue-700"><Eye className="h-4 w-4" /></button>
+                      <button onClick={() => handlePrintReceipt(transaction)} className="rounded-md border border-slate-200 p-2 text-emerald-700"><Printer className="h-4 w-4" /></button>
+                      <button onClick={() => handleDownloadReceipt(transaction)} className="rounded-md border border-slate-200 p-2 text-orange-700"><Download className="h-4 w-4" /></button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full min-w-[760px]">
+              <thead className="border-b bg-slate-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Transaction ID
                   </th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Date & Time
                   </th>
                   {/* <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
                     Items
                   </th> */}
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Amount
                   </th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Payment
                   </th>
-                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-500">
                     Actions
                   </th>
                 </tr>

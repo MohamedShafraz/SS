@@ -19,6 +19,7 @@ const stripe = stripeSecretKey
 
 type CartItem = {
   id: string;
+  product_id: string;
   name: string;
   price: number;
   quantity: number;
@@ -43,6 +44,10 @@ function toFiniteNumber(value: unknown) {
   return Number.isFinite(numberValue) ? numberValue : null;
 }
 
+function getCartProductId(item: CartItem) {
+  return item.product_id || (item.variant_id ? item.id.replace(`-${item.variant_id}`, "") : item.id);
+}
+
 function parseCartItem(value: unknown): CartItem | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -50,6 +55,7 @@ function parseCartItem(value: unknown): CartItem | null {
 
   const item = value as Record<string, unknown>;
   const id = typeof item.id === "string" ? item.id.trim() : "";
+  const productId = typeof item.product_id === "string" ? item.product_id.trim() : "";
   const name = typeof item.name === "string" ? item.name.trim() : "";
   const price = toFiniteNumber(item.price);
   const quantity = toFiniteNumber(item.quantity);
@@ -63,6 +69,7 @@ function parseCartItem(value: unknown): CartItem | null {
 
   return {
     id,
+    product_id: productId || (variantId ? id.replace(`-${variantId}`, "") : id),
     name,
     price,
     quantity,
@@ -171,7 +178,7 @@ export async function POST(request: NextRequest) {
 
     const itemRows = cart.map((item) => ({
       transaction_id: transactionId,
-      product_id: item.variant_id ? item.id.split("-")[0] : item.id,
+      product_id: getCartProductId(item),
       quantity: item.quantity,
       unit_price: item.price,
       discount: item.discountType === "percentage" ? (item.price * item.quantity * item.discount) / 100 : item.discount,

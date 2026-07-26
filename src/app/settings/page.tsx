@@ -196,15 +196,16 @@ export default function SettingsPage() {
 
   return (
     <MainLayout>
-      <div className="max-w-4xl space-y-6">
+      <div className="max-w-7xl space-y-5">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-          <p className="text-gray-600">Configure your POS system</p>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase text-slate-500">Administration</p>
+          <h1 className="text-2xl font-bold text-slate-950">Settings</h1>
+          <p className="text-sm text-slate-600">Configure business profile, terminal behavior, plans, and staff access.</p>
         </div>
 
         {/* Shop Information */}
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-xl font-semibold text-gray-900 mb-6">
             Business Profile
           </h2>
@@ -269,7 +270,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Business Settings */}
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-xl font-semibold text-gray-900 mb-6">
             Business Settings
           </h2>
@@ -367,7 +368,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Barcode Scanner Settings */}
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2 mb-6">
             <AlertCircle className="w-5 h-5 text-blue-600" />
             <h2 className="text-xl font-semibold text-gray-900">
@@ -430,7 +431,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Notification Settings */}
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-xl font-semibold text-gray-900 mb-6">
             Notification Settings
           </h2>
@@ -496,7 +497,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Shop Templates */}
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-xl font-semibold text-gray-900 mb-2">
             Shop Templates
           </h2>
@@ -537,7 +538,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Low Cost Plans */}
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-xl font-semibold text-gray-900 mb-2">
             Low-Cost Plans
           </h2>
@@ -581,7 +582,7 @@ export default function SettingsPage() {
         </div>
 
         {/* User Credentials */}
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2 mb-2">
             <Users className="w-5 h-5 text-blue-600" />
             <h2 className="text-xl font-semibold text-gray-900">User Credentials</h2>
