@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Sample Product",
+    "category": "Products",
+    "price": 1000,
+    "cost": 700,
+    "quantity": 10,
+    "barcode": "BCD-1001",
+    "sku": "SKU-1001"
+  }
+]

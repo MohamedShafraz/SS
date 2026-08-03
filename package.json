@@ -6,10 +6,63 @@
     "dev": "cross-env NODE_OPTIONS=--openssl-legacy-provider next dev",
     "build": "cross-env NODE_OPTIONS=--openssl-legacy-provider next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "license:keys": "node scripts/license-keys.cjs",
+    "license:server": "node scripts/activation-server.cjs",
+    "license:issue": "node scripts/activation-server.cjs --issue",
+    "write-license-config": "node scripts/write-license-config.cjs",
+    "register-client": "node scripts/register-client.cjs",
+    "prepare-electron": "node scripts/prepare-electron.cjs",
+    "dist:win": "npm.cmd run build && npm.cmd run prepare-electron && electron-builder --win nsis",
+    "pack:win": "npm.cmd run build && npm.cmd run prepare-electron && electron-builder --win dir"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.mshpos.offline",
+    "productName": "MSHPOS",
+    "icon": "build/icon.ico",
+    "asar": true,
+    "asarUnpack": [
+      ".next/standalone/**"
+    ],
+    "files": [
+      "electron/**",
+      ".next/standalone/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "client-build/data",
+        "to": "initial-data",
+        "filter": [
+          "pos-local-db.sqlite"
+        ]
+      },
+      {
+        "from": "client-build/license-config.json",
+        "to": "license-config.json"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "MSHPOS Setup ${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MSHPOS"
+    }
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.38.0",
     "bcryptjs": "^3.0.3",
     "date-fns": "^2.30.0",
     "html2canvas": "^1.4.1",
@@ -22,7 +75,6 @@
     "react-dom": "^18",
     "react-hot-toast": "^2.4.0",
     "recharts": "^2.10.0",
-    "stripe": "^17.7.0",
     "zustand": "^4.4.0"
   },
   "devDependencies": {
@@ -33,6 +85,8 @@
     "@types/react-dom": "^18",
     "autoprefixer": "^10.0.1",
     "cross-env": "^10.1.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^8",
     "eslint-config-next": "^14.0.0",
     "postcss": "^8",

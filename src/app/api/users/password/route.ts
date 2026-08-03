@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
-import { createClient } from "@supabase/supabase-js";
+import bcrypt from "bcryptjs";
+import { readDb, updateRows } from "@/lib/local-store";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_POS_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_POS_SUPABASE_ANON_KEY!,
-  { auth: { persistSession: false } }
-);
+const JWT_SECRET =
+  process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 32
+    ? process.env.JWT_SECRET
+    : "offline-pos-local-session-secret-change-before-client-build";
 
 async function parseJsonBody(request: NextRequest) {
   try {
@@ -27,48 +25,39 @@ function isNonEmptyString(value: unknown): value is string {
 
 function requireAdmin(request: NextRequest) {
   const token = request.cookies.get("auth_token")?.value;
-
-  if (!token) {
-    throw new Error("Unauthorized");
-  }
+  if (!token) throw new Error("Unauthorized");
 
   const payload = jwt.verify(token, JWT_SECRET) as { role?: string };
-  if (payload.role !== "admin") {
-    throw new Error("Forbidden");
-  }
+  if (payload.role !== "admin") throw new Error("Forbidden");
 }
 
 export async function POST(request: NextRequest) {
   try {
     requireAdmin(request);
-
     const body = await parseJsonBody(request);
 
     if (!body) {
       return NextResponse.json({ message: "Invalid JSON body" }, { status: 400 });
     }
 
-    const email = isNonEmptyString(body.email) ? body.email.trim() : "";
+    const email = isNonEmptyString(body.email) ? body.email.trim().toLowerCase() : "";
     const password = isNonEmptyString(body.password) ? body.password : "";
 
     if (!email || !password) {
-      return NextResponse.json(
-        { message: "Email and new password are required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ message: "Email and new password are required" }, { status: 400 });
     }
 
-    const { data, error } = await supabase.rpc("admin_reset_user_password", {
-      p_email: email,
-      p_password: password,
-    });
-
-    if (error) {
-      console.error("Failed to reset user password:", error);
-      return NextResponse.json({ message: "Failed to reset user password" }, { status: 500 });
+    const user = readDb().users.find((candidate) => candidate.email === email);
+    if (!user) {
+      return NextResponse.json({ message: "User not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ user: data });
+    const { data } = updateRows("users", { password_hash: await bcrypt.hash(password, 10) }, [
+      { column: "id", op: "eq", value: user.id },
+    ]);
+    const { password_hash, ...updatedUser } = data[0];
+
+    return NextResponse.json({ user: updatedUser });
   } catch (error: any) {
     return NextResponse.json(
       { message: error?.message === "Forbidden" ? "Forbidden" : "Unauthorized" },

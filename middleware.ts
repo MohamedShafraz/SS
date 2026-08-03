@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const AUTH_COOKIE_NAME = "auth_token";
+const LOCAL_JWT_FALLBACK = "offline-pos-local-session-secret-change-before-client-build";
 
 // Routes that require authentication
 const protectedRoutes = ["/dashboard", "/pos", "/products", "/transactions", "/settings"];
@@ -17,11 +18,7 @@ type SessionPayload = {
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET?.trim();
 
-  if (!secret || secret.length < 32) {
-    return null;
-  }
-
-  return secret;
+  return secret && secret.length >= 32 ? secret : LOCAL_JWT_FALLBACK;
 }
 
 function base64UrlToBytes(value: string) {
@@ -117,8 +114,19 @@ export async function middleware(request: NextRequest) {
   const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
   const pathname = request.nextUrl.pathname;
 
+  if (pathname.startsWith("/api/payments/stripe")) {
+    return NextResponse.json(
+      { message: "Online Stripe payments are disabled in the offline Windows build" },
+      { status: 410 }
+    );
+  }
+
+  if (pathname.startsWith("/register") || pathname.startsWith("/payment")) {
+    return NextResponse.redirect(new URL("/activate", request.url));
+  }
+
   // Allow login page without authentication
-  if (pathname === "/login" || pathname === "/") {
+  if (pathname === "/login" || pathname === "/" || pathname === "/activate") {
     return NextResponse.next();
   }
 
@@ -188,5 +196,9 @@ export const config = {
     // Also match root and login (so we can allow them)
     "/",
     "/login",
+    "/activate",
+    "/register/:path*",
+    "/payment/:path*",
+    "/api/payments/stripe/:path*",
   ],
 };

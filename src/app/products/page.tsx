@@ -57,7 +57,7 @@ export default function ProductsPage() {
 
       if (isActive()) {
         setProducts(
-          (data || []).map((product) => ({
+          (data || []).map((product: Product) => ({
             id: product.id,
             name: product.name,
             category: product.category,

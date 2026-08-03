@@ -2,7 +2,6 @@
 
 import { MainLayout } from "@/components/layout";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { Trash2, Printer, Check, X, Barcode, Eye, ArrowLeft, ShoppingCart, RotateCcw } from "lucide-react";
 import toast from "react-hot-toast";
 import { supabase, fetchProductsWithVariants, findVariantByBarcode } from "@/lib/supabase";
@@ -71,10 +70,6 @@ export default function POSPage() {
 }
 
 function POSContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const stripeStatus = searchParams.get("stripe");
-  const stripeSessionId = searchParams.get("session_id");
   const [mode, setMode] = useState<"sale" | "returns">("sale");  // NEW: mode toggle
   const [cart, setCart] = useState<CartItem[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -86,7 +81,6 @@ function POSContent() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showVariantSelector, setShowVariantSelector] = useState(false);
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
-  const [stripeBusy, setStripeBusy] = useState(false);
   
   // NEW: Returns mode state
   const [transactionId, setTransactionId] = useState("");
@@ -98,7 +92,6 @@ function POSContent() {
   const [replacementCart, setReplacementCart] = useState<CartItem[]>([]);
   
   const barcodeInputRef = useRef<HTMLInputElement>(null);
-  const stripeCallbackRef = useRef<string | null>(null);
 
   const fetchProducts = useCallback(async (isActive: () => boolean = () => true) => {
     try {
@@ -134,86 +127,7 @@ function POSContent() {
     );
   }, [barcodeInput, products]);
 
-  useEffect(() => {
-    if (!stripeStatus || !stripeSessionId) {
-      return;
-    }
-
-    const callbackKey = `${stripeStatus}:${stripeSessionId}`;
-    if (stripeCallbackRef.current === callbackKey) {
-      return;
-    }
-
-    const controller = new AbortController();
-    let active = true;
-
-    const handleStripeCallback = async () => {
-      if (stripeStatus === "cancelled") {
-        await fetch("/api/payments/stripe/cancel", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId: stripeSessionId }),
-          signal: controller.signal,
-        });
-        if (active) {
-          stripeCallbackRef.current = callbackKey;
-          toast("Stripe payment cancelled");
-          router.replace("/pos");
-        }
-        return;
-      }
-
-      if (stripeStatus === "success") {
-        if (active) {
-          setStripeBusy(true);
-        }
-        const response = await fetch("/api/payments/stripe/complete", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId: stripeSessionId }),
-          signal: controller.signal,
-        });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(result.message || "Failed to finalize Stripe payment");
-        }
-
-        await fetchProducts(() => active);
-        if (active) {
-          stripeCallbackRef.current = callbackKey;
-          setCart([]);
-          setDiscount(0);
-          setDiscountType("lkr");
-          toast.success("Stripe payment completed successfully!");
-          router.replace("/pos");
-        }
-      }
-    };
-
-    handleStripeCallback()
-      .catch((error) => {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
-        }
-        console.error("Stripe callback error:", error);
-        toast.error(error instanceof Error ? error.message : "Stripe payment could not be completed");
-        router.replace("/pos");
-      })
-      .finally(() => {
-        if (active) {
-          setStripeBusy(false);
-        }
-      });
-
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [fetchProducts, router, stripeSessionId, stripeStatus]);
-
-  // Fetch products with variants from Supabase
+  // Fetch products with variants from local offline storage
   useEffect(() => {
     let active = true;
 
@@ -667,41 +581,8 @@ function POSContent() {
       return;
     }
 
-    if (paymentMethod === "stripe") {
-      try {
-        setStripeBusy(true);
-        const response = await fetch("/api/payments/stripe/create-session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            cart,
-            total,
-            discountAmount: globalDiscount,
-          }),
-        });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(result.message || "Failed to create Stripe checkout");
-        }
-
-        if (!result.sessionUrl) {
-          throw new Error("Stripe checkout URL was not returned");
-        }
-
-        window.location.href = result.sessionUrl;
-        return;
-      } catch (error) {
-        console.error("Stripe checkout error:", error);
-        toast.error(error instanceof Error ? error.message : "Error starting Stripe checkout");
-        setStripeBusy(false);
-        return;
-      }
-    }
-
     try {
-      // Save transaction to Supabase
+      // Save transaction to local offline storage
       const { data: transactionData, error: transactionError } = await supabase
         .from("transactions")
         .insert([
@@ -1125,7 +1006,6 @@ function POSContent() {
                 <option value="cash">Cash</option>
                 <option value="card">Card</option>
                 <option value="check">Check</option>
-                <option value="stripe">Stripe</option>
               </select>
             </div>
 
@@ -1133,11 +1013,10 @@ function POSContent() {
             <div className="flex gap-2">
               <button
                 onClick={handleCheckout}
-                disabled={stripeBusy}
-                className="btn-success flex-1 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                className="btn-success flex-1 flex items-center justify-center gap-2"
               >
                 <Check className="w-5 h-5" />
-                {paymentMethod === "stripe" ? "Pay with Stripe" : "Checkout"}
+                Checkout
               </button>
               <button
                 onClick={handlePrint}

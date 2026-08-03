@@ -41,10 +41,17 @@ export default function Dashboard() {
   const [industryMode, setIndustryMode] = useState<IndustryMode>("general");
 
   const categoryPresets = getCategoryPresets(industryMode);
+  const isManagerDayScope = authContext?.user?.role === "manager";
 
   useEffect(() => {
     setIndustryMode(getStoredIndustryMode());
   }, []);
+
+  useEffect(() => {
+    if (isManagerDayScope && dateFilter !== "today") {
+      setDateFilter("today");
+    }
+  }, [dateFilter, isManagerDayScope]);
 
   // Fetch base data on mount and when auth scope changes.
   useEffect(() => {
@@ -150,12 +157,17 @@ export default function Dashboard() {
 
   // Get filtered transaction items by category
   const getFilteredItems = () => {
+    const scopedTransactionIds = new Set(transactions.map((transaction) => transaction.id));
+    const scopedItems = isManagerDayScope
+      ? transactionItems.filter((item) => scopedTransactionIds.has(item.transaction_id))
+      : transactionItems;
+
     if (categoryFilter === "all") {
-      return transactionItems;
+      return scopedItems;
     }
     
     // Filter items by category
-    return transactionItems.filter((item) => {
+    return scopedItems.filter((item) => {
       const product = products.find((p) => p.id === item.product_id);
       return product && product.category === categoryFilter;
     });
@@ -260,8 +272,8 @@ export default function Dashboard() {
     
     // Get filtered items
     const filteredItems = categoryFilter === "all" 
-      ? transactionItems 
-      : transactionItems.filter((item) => {
+      ? getFilteredItems()
+      : getFilteredItems().filter((item) => {
           const product = products.find((p) => p.id === item.product_id);
           return product && product.category === categoryFilter;
         });
@@ -279,7 +291,7 @@ export default function Dashboard() {
       ];
     } else {
       // Show all categories
-      transactionItems.forEach((item) => {
+      getFilteredItems().forEach((item) => {
         const product = products.find((p) => p.id === item.product_id);
         if (product) {
           const category = product.category;
@@ -359,7 +371,11 @@ export default function Dashboard() {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-            <p className="text-gray-600">Sales, profit, and inventory overview</p>
+            <p className="text-gray-600">
+              {isManagerDayScope
+                ? "Today sales, profit, and inventory overview"
+                : "Sales, profit, and inventory overview"}
+            </p>
           </div>
 
           {/* Filters - Only show for authenticated users */}
@@ -371,9 +387,13 @@ export default function Dashboard() {
                 className="input-base"
               >
                 <option value="today">Today</option>
-                <option value="week">This Week</option>
-                <option value="month">This Month</option>
-                <option value="year">This Year</option>
+                {!isManagerDayScope && (
+                  <>
+                    <option value="week">This Week</option>
+                    <option value="month">This Month</option>
+                    <option value="year">This Year</option>
+                  </>
+                )}
               </select>
 
               <select

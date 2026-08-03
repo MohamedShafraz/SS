@@ -15,6 +15,17 @@ export default function LoginPage() {
   const router = useRouter();
 
   useEffect(() => {
+    fetch("/api/license/status")
+      .then((response) => response.json())
+      .then((status) => {
+        if (!status.activated || status.usersCount === 0) {
+          router.replace("/activate");
+        }
+      })
+      .catch(() => router.replace("/activate"));
+  }, [router]);
+
+  useEffect(() => {
     if (!authLoading && isAuthenticated && user) {
       router.replace(user.role === "cashier" ? "/pos" : "/dashboard");
     }
@@ -51,12 +62,9 @@ export default function LoginPage() {
               <ArrowLeft className="h-4 w-4" />
               Home
             </button>
-            <button
-              onClick={() => router.push("/register")}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              Register
-            </button>
+            <span className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700">
+              Offline build
+            </span>
           </header>
 
           <div className="mx-auto w-full max-w-md py-10">
@@ -123,12 +131,7 @@ export default function LoginPage() {
                 <LockKeyhole className="h-4 w-4 text-emerald-600" />
                 Secure session
               </div>
-              <button
-                onClick={() => router.push("/register")}
-                className="font-semibold text-blue-700 hover:text-blue-800"
-              >
-                Create account
-              </button>
+              <span className="font-semibold text-slate-700">Local users only</span>
             </div>
           </div>
 

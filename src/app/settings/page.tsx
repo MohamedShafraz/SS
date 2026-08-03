@@ -5,7 +5,7 @@ import type { BusinessProfile } from "@/types";
 import { useCallback, useEffect, useState } from "react";
 import { Save, AlertCircle, Users, UserPlus, RotateCcw, ShieldCheck } from "lucide-react";
 import toast from "react-hot-toast";
-import { LOW_COST_PLANS, SHOP_TEMPLATES } from "@/lib/shop-offerings";
+import { SHOP_TEMPLATES } from "@/lib/shop-offerings";
 
 interface ManagedUser {
   id: string;
@@ -108,6 +108,31 @@ export default function SettingsPage() {
     return () => controller.abort();
   }, [fetchUsers]);
 
+  useEffect(() => {
+    let active = true;
+
+    fetch("/api/settings")
+      .then((response) => response.json())
+      .then((result) => {
+        if (!active || !result.settings) return;
+        setSettings((prev) => ({ ...prev, ...result.settings }));
+        localStorage.setItem("posSettings", JSON.stringify(result.settings));
+      })
+      .catch(() => {
+        const stored = localStorage.getItem("posSettings");
+        if (!stored) return;
+        try {
+          setSettings((prev) => ({ ...prev, ...JSON.parse(stored) }));
+        } catch {
+          // Keep defaults if local settings are invalid.
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const handleCreateUser = async () => {
     if (!newUser.email.trim() || !newUser.password.trim()) {
       toast.error("Email and password are required");
@@ -180,8 +205,7 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSave = () => {
-    // Save to local storage or API
+  const handleSave = async () => {
     localStorage.setItem("posSettings", JSON.stringify(settings));
     localStorage.setItem(
       "barcodeScannerSettings",
@@ -191,7 +215,19 @@ export default function SettingsPage() {
       "notificationSettings",
       JSON.stringify(notificationSettings)
     );
-    toast.success("Settings saved successfully!");
+
+    try {
+      const response = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "Failed to save settings");
+      toast.success("Settings saved successfully!");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Settings saved locally only");
+    }
   };
 
   return (
@@ -516,9 +552,6 @@ export default function SettingsPage() {
                     </h3>
                     <p className="text-sm text-gray-600">{template.subtitle}</p>
                   </div>
-                  <span className="text-xs font-semibold px-3 py-1 rounded-full bg-blue-50 text-blue-700">
-                    {template.startingFrom}
-                  </span>
                 </div>
                 <p className="text-sm text-gray-700 mb-4">{template.description}</p>
                 <div className="flex flex-wrap gap-2">
@@ -531,50 +564,6 @@ export default function SettingsPage() {
                     </span>
                   ))}
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Low Cost Plans */}
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">
-            Low-Cost Plans
-          </h2>
-          <p className="text-sm text-gray-600 mb-6">
-            Affordable options for single shops and multi-branch businesses.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {LOW_COST_PLANS.map((plan) => (
-              <div
-                key={plan.name}
-                className={`rounded-xl border p-5 ${
-                  plan.highlighted
-                    ? "border-blue-500 bg-blue-50"
-                    : "border-gray-200 bg-white"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-lg font-semibold text-gray-900">{plan.name}</h3>
-                  {plan.highlighted && (
-                    <span className="text-xs font-semibold px-2 py-1 rounded-full bg-blue-600 text-white">
-                      Best Value
-                    </span>
-                  )}
-                </div>
-                <div className="mb-3">
-                  <span className="text-3xl font-bold text-gray-900">{plan.price}</span>
-                  <span className="text-sm text-gray-600">{plan.billing}</span>
-                </div>
-                <p className="text-sm text-gray-700 mb-4">{plan.description}</p>
-                <ul className="space-y-2 text-sm text-gray-700">
-                  {plan.features.map((feature) => (
-                    <li key={feature} className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-green-500" />
-                      {feature}
-                    </li>
-                  ))}
-                </ul>
               </div>
             ))}
           </div>
@@ -641,6 +630,7 @@ export default function SettingsPage() {
                       className="input-base"
                     >
                       <option value="admin">Admin</option>
+                      <option value="manager">Manager - Today reports</option>
                       <option value="cashier">Cashier</option>
                     </select>
                   </div>

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Eye, Download, Printer } from "lucide-react";
 import toast from "react-hot-toast";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
 
 interface TransactionItem {
   id: string;
@@ -29,6 +30,7 @@ interface Transaction {
 }
 
 export default function TransactionsPage() {
+  const { user } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTransaction, setSelectedTransaction] =
@@ -53,7 +55,7 @@ export default function TransactionsPage() {
 
       if (isActive()) {
         setTransactions(
-          (data || []).map((transaction) => ({
+          (data || []).map((transaction: Transaction) => ({
             id: transaction.id,
             transaction_date: transaction.transaction_date,
             total_amount: transaction.total_amount,
@@ -85,6 +87,7 @@ export default function TransactionsPage() {
   }, [fetchTransactions]);
 
   const filteredTransactions = transactions;
+  const isManagerDayScope = user?.role === "manager";
 
   const handlePrintReceipt = (transaction: Transaction) => {
     toast.success(`Receipt for ${transaction.id} printed!`);
@@ -103,7 +106,11 @@ export default function TransactionsPage() {
         {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Transactions</h1>
-          <p className="text-gray-600">View and manage all sales transactions</p>
+          <p className="text-gray-600">
+            {isManagerDayScope
+              ? "View today sales transactions"
+              : "View and manage all sales transactions"}
+          </p>
         </div>
 
         {/* Summary Cards */}

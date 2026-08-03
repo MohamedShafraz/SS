@@ -15,6 +15,14 @@
 
 # production
 /build
+!/build/
+/build/*
+!/build/icon.ico
+/release/
+/client-build/data/
+activation-records.json
+activation-records*.json
+client-build/license-config.json
 
 # misc
 .DS_Store

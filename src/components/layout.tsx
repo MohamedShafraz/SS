@@ -96,7 +96,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const displayName = user?.name?.trim() || user?.email || "User";
 
-  // Client-side guard: ensure cashier can't access non-POS routes
+  // Client-side guard: ensure cashier can't access non-POS routes.
   useEffect(() => {
     if (!user) return;
     if (user.role === "cashier" && !pathname.startsWith("/pos")) {
