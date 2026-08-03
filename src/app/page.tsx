@@ -146,12 +146,12 @@ export default function Home() {
           </div>
           <div className="rounded-3xl bg-white p-8 border border-slate-200 shadow-lg">
             <p className="text-sm uppercase tracking-[0.2em] text-slate-500 mb-2">Low-cost starter</p>
-            <p className="text-4xl font-bold text-slate-950">LKR 2,990</p>
+            <p className="text-4xl font-bold text-slate-950">LKR 129,990</p>
             <p className="text-slate-600 mt-2">One shop, billing, inventory, and reports.</p>
           </div>
           <div className="rounded-3xl bg-gradient-to-br from-blue-600 to-cyan-500 text-white p-8 shadow-lg">
             <p className="text-sm uppercase tracking-[0.2em] text-blue-100 mb-2">Best value</p>
-            <p className="text-4xl font-bold">LKR 4,990</p>
+            <p className="text-4xl font-bold">LKR 249,990</p>
             <p className="text-blue-50 mt-2">Up to 3 shops with templates and variants.</p>
           </div>
         </div>

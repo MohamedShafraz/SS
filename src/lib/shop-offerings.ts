@@ -111,14 +111,14 @@ export const SHOP_TEMPLATES: ShopTemplate[] = [
 export const LOW_COST_PLANS: PricingPlan[] = [
   {
     name: "Starter",
-    price: "LKR 2,990",
+    price: "LKR 129,990",
     billing: "/ month",
     description: "For one shop that needs clean billing, stock tracking, and simple reports.",
     features: ["1 shop", "POS billing", "Basic inventory", "Daily summary"],
   },
   {
     name: "Growth",
-    price: "LKR 4,990",
+    price: "LKR 249,990",
     billing: "/ month",
     description: "For growing stores that want variants, categories, and better analytics.",
     features: ["Up to 3 shops", "Industry templates", "Variant support", "Sales dashboard"],
@@ -126,7 +126,7 @@ export const LOW_COST_PLANS: PricingPlan[] = [
   },
   {
     name: "Multi-Shop",
-    price: "LKR 7,990",
+    price: "LKR 287,990",
     billing: "/ month",
     description: "For businesses running separate shops with shared control and reporting.",
     features: ["Unlimited shop profiles", "Branch reporting", "Low-stock alerts", "Priority setup"],
