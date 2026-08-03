@@ -19,6 +19,7 @@
 /build/*
 !/build/icon.ico
 /release/
+/data/
 /client-build/data/
 activation-records.json
 activation-records*.json
