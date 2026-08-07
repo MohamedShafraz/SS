@@ -18,7 +18,15 @@ export interface TransactionWithItems {
   items: ReturnableTransactionItem[];
 }
 
+export type TransactionLookupResult =
+  | { ok: true; transaction: Transaction; items: ReturnableTransactionItem[] }
+  | { ok: false; reason: "not_found" | "non_returnable" | "no_returnable_items" };
+
 export type ReturnableTransactionItem = ReturnType<typeof normalizeTransactionItemWithProduct>;
+
+function isReturnTransaction(transaction: Transaction) {
+  return Boolean(transaction.original_return_id) && transaction.total_amount < 0;
+}
 
 export interface ReturnItemInput {
   product_id: string;
@@ -32,6 +40,15 @@ export interface ReplacementItemInput {
   variant_id?: string | null;
   quantity: number;
   replacement_price: number;
+}
+
+export interface TransactionLineInput {
+  product_id: string;
+  variant_id?: string | null;
+  quantity: number;
+  unit_price: number;
+  discount: number;
+  subtotal: number;
 }
 
 /**
@@ -191,6 +208,101 @@ export const createReplacementTransaction = async (
     return null;
   }
 };
+
+/**
+ * Create a negative transaction for a completed return so reports reflect refunds.
+ */
+export const createReturnTransaction = async (
+  returnId: string,
+  refundAmount: number,
+  paymentMethod: string
+): Promise<Transaction | null> => {
+  try {
+    const returnTransaction: TransactionInsert = {
+      transaction_date: new Date().toISOString(),
+      total_amount: -Math.abs(refundAmount),
+      discount_amount: 0,
+      tax_amount: 0,
+      payment_method: paymentMethod,
+      status: "completed",
+      stripe_session_id: null,
+      user_id: null,
+      is_replacement_transaction: false,
+      original_return_id: returnId,
+    };
+
+    const { data, error } = await supabase
+      .from("transactions")
+      .insert([returnTransaction])
+      .select();
+
+    if (error) throw error;
+    return data?.[0] ? normalizeTransaction(data[0]) : null;
+  } catch (error) {
+    console.error("Error creating return transaction:", error);
+    return null;
+  }
+};
+
+export const fetchReturnableTransactionWithItems = async (
+  transactionId: string
+): Promise<TransactionLookupResult> => {
+  const result = await fetchTransactionWithItems(transactionId);
+  if (!result) {
+    return { ok: false, reason: "not_found" };
+  }
+
+  if (isReturnTransaction(result.transaction) || result.transaction.is_replacement_transaction) {
+    return { ok: false, reason: "non_returnable" };
+  }
+
+  const returnableItems = result.items.filter(
+    (item) => item.quantity > 0 && item.subtotal > 0
+  );
+
+  if (returnableItems.length === 0) {
+    return { ok: false, reason: "no_returnable_items" };
+  }
+
+  return {
+    ok: true,
+    transaction: result.transaction,
+    items: returnableItems,
+  };
+};
+
+/**
+ * Save transaction item rows for return/replacement transactions.
+ */
+export const createTransactionItems = async (
+  transactionId: string,
+  items: TransactionLineInput[]
+): Promise<boolean> => {
+  try {
+    const transactionItems = items.map((item) => ({
+      transaction_id: transactionId,
+      product_id: item.product_id,
+      variant_id: item.variant_id ?? null,
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      discount: item.discount,
+      subtotal: item.subtotal,
+    }));
+
+    const { error } = await supabase
+      .from("transaction_items")
+      .insert(transactionItems);
+
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    console.error("Error creating transaction items:", error);
+    return false;
+  }
+};
+
+export const createReplacementTransactionItems = createTransactionItems;
+export const createReturnTransactionItems = createTransactionItems;
 
 /**
  * Mark return as completed

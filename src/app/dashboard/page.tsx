@@ -381,20 +381,18 @@ export default function Dashboard() {
           {/* Filters - Only show for authenticated users */}
           {authContext?.isAuthenticated && (
             <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
-              <select
-                value={dateFilter}
-                onChange={(e) => setDateFilter(e.target.value)}
-                className="input-base"
-              >
-                <option value="today">Today</option>
-                {!isManagerDayScope && (
-                  <>
+              {!isManagerDayScope && (
+                <select
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                  className="input-base"
+                >
+                  <option value="today">Today</option>
                     <option value="week">This Week</option>
                     <option value="month">This Month</option>
                     <option value="year">This Year</option>
-                  </>
-                )}
-              </select>
+                </select>
+              )}
 
               <select
                 value={categoryFilter}

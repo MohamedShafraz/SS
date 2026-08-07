@@ -107,6 +107,7 @@ const TABLE_COLUMNS: Record<TableName, string[]> = {
     "id",
     "transaction_id",
     "product_id",
+    "variant_id",
     "quantity",
     "unit_price",
     "discount",
@@ -303,6 +304,7 @@ function migrate(db: SqliteDb) {
       id TEXT PRIMARY KEY,
       transaction_id TEXT NOT NULL,
       product_id TEXT NOT NULL,
+      variant_id TEXT,
       quantity INTEGER NOT NULL DEFAULT 0,
       unit_price REAL NOT NULL DEFAULT 0,
       discount REAL NOT NULL DEFAULT 0,
@@ -394,6 +396,15 @@ function migrate(db: SqliteDb) {
     CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(transaction_date);
     CREATE INDEX IF NOT EXISTS idx_transaction_items_tx ON transaction_items(transaction_id);
   `);
+
+  ensureColumn(db, "transaction_items", "variant_id", "TEXT");
+}
+
+function ensureColumn(db: SqliteDb, table: string, column: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (columns.some((item) => item.name === column)) return;
+
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 function importLegacyJsonIfNeeded(db: SqliteDb) {
@@ -473,6 +484,7 @@ function withDefaults(table: TableName, row: any) {
       ...base,
       transaction_id: row.transaction_id,
       product_id: row.product_id,
+      variant_id: row.variant_id || null,
       quantity: Number(row.quantity || 0),
       unit_price: Number(row.unit_price || 0),
       discount: Number(row.discount || 0),

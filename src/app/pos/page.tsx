@@ -5,8 +5,18 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { Trash2, Printer, Check, X, Barcode, Eye, ArrowLeft, ShoppingCart, RotateCcw } from "lucide-react";
 import toast from "react-hot-toast";
 import { supabase, fetchProductsWithVariants, findVariantByBarcode } from "@/lib/supabase";
-import { ProductVariant } from "@/types";
-import { fetchTransactionWithItems, createReturn, addReturnItems, addReplacementItems, createReplacementTransaction, completeReturn } from "@/lib/returns";
+import { BusinessProfile, ProductVariant } from "@/types";
+import {
+  fetchReturnableTransactionWithItems,
+  createReturn,
+  addReturnItems,
+  addReplacementItems,
+  createReplacementTransaction,
+  createReplacementTransactionItems,
+  createReturnTransaction,
+  createReturnTransactionItems,
+  completeReturn,
+} from "@/lib/returns";
 
 interface CartItem {
   id: string;
@@ -37,6 +47,7 @@ interface Product {
 interface TransactionItem {
   id: string;
   product_id: string;
+  variant_id?: string | null;
   quantity: number;
   unit_price: number;
   discount: number;
@@ -54,6 +65,32 @@ interface TransactionData {
   discount_amount: number;
   payment_method: string;
 }
+
+interface ReceiptPreview {
+  transactionId: string;
+  transactionDate: string;
+  items: CartItem[];
+  subtotal: number;
+  discount: number;
+  total: number;
+  paymentMethod: string;
+  status: "draft" | "completed";
+}
+
+const defaultReceiptSettings: BusinessProfile = {
+  businessName: "Unified Business",
+  address: "123 Main Street, City",
+  phone: "+94 77 712 3456",
+  email: "info@business.com",
+  taxRate: 5,
+  currency: "/=",
+  businessType: "Retail",
+  barcodePrefix: "BCD",
+  industryMode: "general",
+  receiptLayout: "standard",
+  receiptPaperWidth: "80mm",
+  showReceiptBusinessInfo: true,
+};
 
 export default function POSPage() {
   return (
@@ -81,6 +118,9 @@ function POSContent() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showVariantSelector, setShowVariantSelector] = useState(false);
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
+  const [receiptSettings, setReceiptSettings] =
+    useState<BusinessProfile>(defaultReceiptSettings);
+  const [receiptPreview, setReceiptPreview] = useState<ReceiptPreview | null>(null);
   
   // NEW: Returns mode state
   const [transactionId, setTransactionId] = useState("");
@@ -92,6 +132,11 @@ function POSContent() {
   const [replacementCart, setReplacementCart] = useState<CartItem[]>([]);
   
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+
+  const currency = receiptSettings.currency || "/=";
+  const receiptLayout = receiptSettings.receiptLayout || "standard";
+  const receiptPaperWidth = receiptSettings.receiptPaperWidth || "80mm";
+  const showReceiptBusinessInfo = receiptSettings.showReceiptBusinessInfo !== false;
 
   const fetchProducts = useCallback(async (isActive: () => boolean = () => true) => {
     try {
@@ -138,6 +183,30 @@ function POSContent() {
     };
   }, [fetchProducts]);
 
+  useEffect(() => {
+    let active = true;
+
+    fetch("/api/settings")
+      .then((response) => response.json())
+      .then((result) => {
+        if (!active || !result.settings) return;
+        setReceiptSettings((prev) => ({ ...prev, ...result.settings }));
+      })
+      .catch(() => {
+        const stored = localStorage.getItem("posSettings");
+        if (!stored) return;
+        try {
+          setReceiptSettings((prev) => ({ ...prev, ...JSON.parse(stored) }));
+        } catch {
+          // Keep defaults if stored settings cannot be parsed.
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // NEW: Lookup original transaction for returns
   const handleLookupTransaction = async () => {
     if (!transactionId.trim()) {
@@ -146,9 +215,15 @@ function POSContent() {
     }
 
     try {
-      const result = await fetchTransactionWithItems(transactionId);
-      if (!result) {
-        toast.error("Transaction not found");
+      const result = await fetchReturnableTransactionWithItems(transactionId);
+      if (!result.ok) {
+        const message =
+          result.reason === "non_returnable"
+            ? "Return and replacement transactions cannot be returned again"
+            : result.reason === "no_returnable_items"
+            ? "This transaction has no returnable sale items"
+            : "Transaction not found";
+        toast.error(message);
         setOriginalTransaction(null);
         setOriginalItems([]);
         return;
@@ -176,6 +251,11 @@ function POSContent() {
 
   // NEW: Process return and replacement
   const handleProcessReturn = async () => {
+    if (!originalTransaction) {
+      toast.error("Load a transaction before processing a return");
+      return;
+    }
+
     if (selectedReturnItems.size === 0) {
       toast.error("Select at least one item to return");
       return;
@@ -189,7 +269,7 @@ function POSContent() {
     try {
       // Step 1: Create return record
       const returnRecord = await createReturn(
-        originalTransaction!.id,
+        originalTransaction.id,
         returnReason,
         returnNotes
       );
@@ -204,6 +284,7 @@ function POSContent() {
         .filter((item) => selectedReturnItems.has(item.id))
         .map((item) => ({
           product_id: item.product_id,
+          variant_id: item.variant_id ?? null,
           quantity: item.quantity,
           refund_amount: item.subtotal,
         }));
@@ -211,6 +292,43 @@ function POSContent() {
       const itemsAdded = await addReturnItems(returnRecord.id, returnItems);
       if (!itemsAdded) {
         toast.error("Failed to add return items");
+        return;
+      }
+
+      const restocked = await restockReturnedItems(returnItems);
+      if (!restocked) {
+        toast.error("Failed to restock returned items");
+        return;
+      }
+
+      const refundTotal = returnItems.reduce((sum, item) => sum + item.refund_amount, 0);
+      const returnTransaction = await createReturnTransaction(
+        returnRecord.id,
+        refundTotal,
+        originalTransaction.payment_method || paymentMethod
+      );
+
+      if (!returnTransaction) {
+        toast.error("Failed to create return transaction");
+        return;
+      }
+
+      const returnTransactionItemsAdded = await createReturnTransactionItems(
+        returnTransaction.id,
+        originalItems
+          .filter((item) => selectedReturnItems.has(item.id))
+          .map((item) => ({
+            product_id: item.product_id,
+            variant_id: item.variant_id ?? null,
+            quantity: -Math.abs(item.quantity),
+            unit_price: item.unit_price,
+            discount: 0,
+            subtotal: -Math.abs(item.subtotal),
+          }))
+      );
+
+      if (!returnTransactionItemsAdded) {
+        toast.error("Failed to create return transaction items");
         return;
       }
 
@@ -247,8 +365,36 @@ function POSContent() {
           return;
         }
 
-        // Update stocks
-        await updateReplacementStocks();
+        const replacementTransactionItemsAdded = await createReplacementTransactionItems(
+          txn.id,
+          replacementCart.map((item) => {
+            const itemTotal = item.price * item.quantity;
+            const itemDiscount =
+              item.discountType === "percentage"
+                ? (itemTotal * item.discount) / 100
+                : Math.min(itemTotal, item.discount);
+
+            return {
+              product_id: item.variant_id ? item.id.split("-")[0] : item.id,
+              variant_id: item.variant_id ?? null,
+              quantity: item.quantity,
+              unit_price: item.price,
+              discount: itemDiscount,
+              subtotal: Math.max(0, itemTotal - itemDiscount),
+            };
+          })
+        );
+
+        if (!replacementTransactionItemsAdded) {
+          toast.error("Failed to create replacement transaction items");
+          return;
+        }
+
+        const replacementStockUpdated = await updateReplacementStocks();
+        if (!replacementStockUpdated) {
+          toast.error("Failed to update replacement stock");
+          return;
+        }
       }
 
       // Mark return as completed
@@ -287,6 +433,45 @@ function POSContent() {
     return { subtotal, globalDiscount: 0, total: Math.max(0, subtotal) };
   };
 
+  const restockReturnedItems = async (
+    items: { product_id: string; variant_id?: string | null; quantity: number }[]
+  ) => {
+    for (const item of items) {
+      if (item.variant_id) {
+        const variant = products
+          .flatMap((product) => product.variants || [])
+          .find((variant) => variant.id === item.variant_id);
+
+        if (!variant) return false;
+
+        const { error } = await supabase
+          .from("product_variants")
+          .update({ quantity: variant.quantity + item.quantity, updated_at: new Date().toISOString() })
+          .eq("id", item.variant_id);
+
+        if (error) {
+          console.error("Error restocking variant:", error);
+          return false;
+        }
+      } else {
+        const product = products.find((product) => product.id === item.product_id);
+        if (!product) return false;
+
+        const { error } = await supabase
+          .from("products")
+          .update({ quantity: product.quantity + item.quantity, updated_at: new Date().toISOString() })
+          .eq("id", item.product_id);
+
+        if (error) {
+          console.error("Error restocking product:", error);
+          return false;
+        }
+      }
+    }
+
+    return true;
+  };
+
   // NEW: Update stocks for replacement items
   const updateReplacementStocks = async () => {
     for (const item of replacementCart) {
@@ -296,21 +481,37 @@ function POSContent() {
           .find((v) => v.id === item.variant_id);
 
         if (variant) {
-          await supabase
+          const { error } = await supabase
             .from("product_variants")
-            .update({ quantity: variant.quantity - item.quantity })
+            .update({ quantity: variant.quantity - item.quantity, updated_at: new Date().toISOString() })
             .eq("id", item.variant_id);
+
+          if (error) {
+            console.error("Error updating replacement variant quantity:", error);
+            return false;
+          }
+        } else {
+          return false;
         }
       } else {
         const product = products.find((p) => p.id === item.id);
         if (product) {
-          await supabase
+          const { error } = await supabase
             .from("products")
-            .update({ quantity: product.quantity - item.quantity })
+            .update({ quantity: product.quantity - item.quantity, updated_at: new Date().toISOString() })
             .eq("id", item.id);
+
+          if (error) {
+            console.error("Error updating replacement product quantity:", error);
+            return false;
+          }
+        } else {
+          return false;
         }
       }
     }
+
+    return true;
   };
 
   // NEW: Reset returns mode
@@ -334,6 +535,32 @@ function POSContent() {
     // Focus barcode input on mount
     barcodeInputRef.current?.focus();
   }, []);
+
+  const canUsePrint = () => typeof window !== "undefined" && typeof window.print === "function";
+
+  const warnIfPrinterUnavailable = () => {
+    if (!canUsePrint()) {
+      toast.error("Printer is not detected. Check the printer connection and try again.");
+      return true;
+    }
+
+    return false;
+  };
+
+  const warnIfScannerUnavailable = () => {
+    const nav = navigator as Navigator & { hid?: unknown; usb?: unknown };
+    const hasScannerApi =
+      typeof window !== "undefined" &&
+      ("BarcodeDetector" in window || Boolean(nav.hid) || Boolean(nav.usb));
+
+    if (!hasScannerApi) {
+      toast.error("Scanner is not detected. Reconnect it or type the barcode manually.");
+      barcodeInputRef.current?.focus();
+      return true;
+    }
+
+    return false;
+  };
 
   const handleBarcodeInput = async (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
@@ -623,6 +850,7 @@ function POSContent() {
           return {
             transaction_id: transactionId,
             product_id: item.variant_id ? item.id.split("-")[0] : item.id, // Extract product ID if variant
+            variant_id: item.variant_id ?? null,
             quantity: item.quantity,
             unit_price: item.price,
             discount: itemDiscount,
@@ -680,22 +908,154 @@ function POSContent() {
       // Refresh products after checkout
       await fetchProducts();
 
+      const completedReceipt: ReceiptPreview = {
+        transactionId: transactionData?.[0]?.id || "pending",
+        transactionDate: new Date().toISOString(),
+        items: cart.map((item) => ({ ...item })),
+        subtotal,
+        discount: globalDiscount,
+        total,
+        paymentMethod,
+        status: "completed",
+      };
+
       toast.success(`Order completed! Total: ${total}/=`);
       setCart([]);
       setDiscount(0);
       setDiscountType("lkr");
       barcodeInputRef.current?.focus();
 
-      // Trigger print after successful checkout
-      handlePrint();
+      setReceiptPreview(completedReceipt);
     } catch (error) {
       console.error("Error:", error);
       toast.error("Error processing checkout");
     }
   };
 
+  const createDraftReceipt = (): ReceiptPreview | null => {
+    if (cart.length === 0) {
+      toast.error("Cart is empty");
+      return null;
+    }
+
+    return {
+      transactionId: "Preview",
+      transactionDate: new Date().toISOString(),
+      items: cart.map((item) => ({ ...item })),
+      subtotal,
+      discount: globalDiscount,
+      total,
+      paymentMethod,
+      status: "draft",
+    };
+  };
+
   const handlePrint = () => {
-    toast.success("Receipt printed!");
+    if (warnIfPrinterUnavailable()) return;
+
+    const draftReceipt = createDraftReceipt();
+    if (draftReceipt) {
+      setReceiptPreview(draftReceipt);
+    }
+  };
+
+  const receiptItemSubtotal = (item: CartItem) => {
+    const itemTotal = Number(item.price || 0) * Number(item.quantity || 0);
+    const rawDiscount = Number(item.discount ?? 0);
+    const itemDiscount =
+      item.discountType === "percentage"
+        ? (itemTotal * rawDiscount) / 100
+        : Math.min(itemTotal, rawDiscount);
+
+    return Math.max(0, itemTotal - itemDiscount);
+  };
+
+  const buildReceiptHtml = (receipt: ReceiptPreview) => {
+    const width = receiptPaperWidth === "58mm" ? "58mm" : "80mm";
+    const isCompact = receiptLayout === "compact";
+    const isDetailed = receiptLayout === "detailed";
+    const rows = receipt.items
+      .map((item) => {
+        const variant = item.variant_type && item.variant_value
+          ? `<div class="muted">${item.variant_type}: ${item.variant_value}</div>`
+          : "";
+        const discountText = isDetailed && item.discount
+          ? `<div class="muted">Discount: ${item.discount}${item.discountType === "percentage" ? "%" : currency}</div>`
+          : "";
+
+        return `
+          <div class="line item">
+            <div>
+              <strong>${item.name}</strong>
+              ${variant}
+              ${discountText}
+              <div class="muted">${item.quantity} x ${Math.round(item.price)}${currency}</div>
+            </div>
+            <div>${Math.round(receiptItemSubtotal(item))}${currency}</div>
+          </div>
+        `;
+      })
+      .join("");
+
+    return `<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Receipt</title>
+          <style>
+            @page { size: ${width} auto; margin: 4mm; }
+            body { width: ${width}; margin: 0 auto; font-family: Arial, sans-serif; color: #111827; font-size: ${isCompact ? "11px" : "12px"}; }
+            .receipt { padding: 8px; }
+            .center { text-align: center; }
+            .title { font-size: ${isCompact ? "15px" : "18px"}; font-weight: 700; margin-bottom: 4px; }
+            .muted { color: #4b5563; font-size: ${isCompact ? "10px" : "11px"}; }
+            .divider { border-top: 1px dashed #9ca3af; margin: 8px 0; }
+            .line { display: flex; justify-content: space-between; gap: 8px; }
+            .item { margin: ${isCompact ? "5px" : "8px"} 0; }
+            .total { font-size: ${isCompact ? "14px" : "16px"}; font-weight: 700; }
+          </style>
+        </head>
+        <body>
+          <div class="receipt">
+            ${showReceiptBusinessInfo ? `
+              <div class="center">
+                <div class="title">${receiptSettings.businessName}</div>
+                <div class="muted">${receiptSettings.address}</div>
+                <div class="muted">${receiptSettings.phone}</div>
+                ${isDetailed ? `<div class="muted">${receiptSettings.email}</div>` : ""}
+              </div>
+              <div class="divider"></div>
+            ` : ""}
+            <div class="line"><span>Bill</span><span>${receipt.transactionId}</span></div>
+            <div class="line"><span>Date</span><span>${new Date(receipt.transactionDate).toLocaleString()}</span></div>
+            <div class="line"><span>Payment</span><span>${receipt.paymentMethod}</span></div>
+            <div class="divider"></div>
+            ${rows}
+            <div class="divider"></div>
+            <div class="line"><span>Subtotal</span><span>${Math.round(receipt.subtotal)}${currency}</span></div>
+            <div class="line"><span>Discount</span><span>${Math.round(receipt.discount)}${currency}</span></div>
+            <div class="line total"><span>Total</span><span>${Math.round(receipt.total)}${currency}</span></div>
+            <div class="divider"></div>
+            <div class="center muted">Thank you</div>
+          </div>
+          <script>window.onload = () => { window.focus(); window.print(); };</script>
+        </body>
+      </html>`;
+  };
+
+  const printReceiptPreview = () => {
+    if (!receiptPreview || warnIfPrinterUnavailable()) return;
+
+    const printWindow = window.open("", "MSHPOSReceiptPrint", "width=420,height=680");
+    if (!printWindow) {
+      toast.error("Print preview popup was blocked. Allow popups and try again.");
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(buildReceiptHtml(receiptPreview));
+    printWindow.document.close();
+    toast.success("Print preview opened");
   };
 
   return (
@@ -745,7 +1105,11 @@ function POSContent() {
                 onKeyPress={handleBarcodeInput}
                 className="input-base flex-1"
               />
-              <button className="btn-primary">
+              <button
+                onClick={warnIfScannerUnavailable}
+                className="btn-primary"
+                title="Check scanner"
+              >
                 <Barcode className="w-5 h-5" />
               </button>
             </div>
@@ -1301,6 +1665,125 @@ function POSContent() {
           </div>
         </div>
       </div>
+      )}
+
+      {/* Receipt Preview Modal */}
+      {receiptPreview && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-lg w-full max-h-screen overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between border-b p-4">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Bill Preview</h2>
+                <p className="text-sm text-gray-600">
+                  {receiptPreview.status === "completed"
+                    ? "Transaction saved. Review the bill before printing."
+                    : "Review the current bill before printing."}
+                </p>
+              </div>
+              <button
+                onClick={() => setReceiptPreview(null)}
+                className="text-gray-400 hover:text-gray-600 text-2xl"
+              >
+                X
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-4 bg-gray-100">
+              <div
+                className={`mx-auto bg-white text-gray-950 shadow-sm p-4 ${
+                  receiptPaperWidth === "58mm" ? "max-w-[260px]" : "max-w-[340px]"
+                }`}
+              >
+                {showReceiptBusinessInfo && (
+                  <div className="text-center border-b border-dashed border-gray-300 pb-3 mb-3">
+                    <h3 className="font-bold text-lg">{receiptSettings.businessName}</h3>
+                    <p className="text-xs text-gray-600">{receiptSettings.address}</p>
+                    <p className="text-xs text-gray-600">{receiptSettings.phone}</p>
+                    {receiptLayout === "detailed" && (
+                      <p className="text-xs text-gray-600">{receiptSettings.email}</p>
+                    )}
+                  </div>
+                )}
+
+                <div className="text-xs space-y-1 border-b border-dashed border-gray-300 pb-3 mb-3">
+                  <div className="flex justify-between gap-3">
+                    <span>Bill</span>
+                    <span>{receiptPreview.transactionId}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span>Date</span>
+                    <span>{new Date(receiptPreview.transactionDate).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span>Payment</span>
+                    <span className="capitalize">{receiptPreview.paymentMethod}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3 border-b border-dashed border-gray-300 pb-3 mb-3">
+                  {receiptPreview.items.map((item) => (
+                    <div key={item.id} className="text-sm">
+                      <div className="flex justify-between gap-3">
+                        <div>
+                          <p className="font-semibold">{item.name}</p>
+                          {item.variant_type && item.variant_value && (
+                            <p className="text-xs text-gray-600">
+                              {item.variant_type}: {item.variant_value}
+                            </p>
+                          )}
+                          {receiptLayout === "detailed" && item.discount > 0 && (
+                            <p className="text-xs text-gray-600">
+                              Discount: {item.discount}
+                              {item.discountType === "percentage" ? "%" : currency}
+                            </p>
+                          )}
+                          <p className="text-xs text-gray-600">
+                            {item.quantity} x {Math.round(item.price)}
+                            {currency}
+                          </p>
+                        </div>
+                        <span>{Math.round(receiptItemSubtotal(item))}{currency}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span>{Math.round(receiptPreview.subtotal)}{currency}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Discount</span>
+                    <span>{Math.round(receiptPreview.discount)}{currency}</span>
+                  </div>
+                  <div className="flex justify-between border-t pt-2 text-lg font-bold">
+                    <span>Total</span>
+                    <span>{Math.round(receiptPreview.total)}{currency}</span>
+                  </div>
+                </div>
+
+                <p className="mt-4 text-center text-xs text-gray-600">Thank you</p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 border-t p-4">
+              <button
+                onClick={printReceiptPreview}
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
+              >
+                <Printer className="w-5 h-5" />
+                Print Bill
+              </button>
+              <button
+                onClick={() => setReceiptPreview(null)}
+                className="btn-secondary flex-1"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Product Details Modal */}

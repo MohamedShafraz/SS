@@ -58,3 +58,20 @@ Thumbs.db
 
 # Agents
 .agents
+
+Windows desktop / Microsoft Store build artifacts
+electron-builder-cache/
+native/**/bin/
+native/**/obj/
+*.appx
+*.msix
+*.appxupload
+*.msixupload
+*.cer
+*.pfx
+*.p12
+
+# Keep app icon if used by website/package metadata
+!/build/
+!/build/icon.ico
+/build/*

@@ -49,14 +49,14 @@ export async function POST(request: NextRequest) {
     }
 
     const timestamp = new Date().toISOString();
-    const activatedRecord = await saveActivationRecord({
+    const activatedRecord = {
       ...record,
       status: "active",
       clientName: record.clientName || clientName || "Offline Client",
       machineFingerprintHash,
       activatedAt: record.activatedAt || timestamp,
       updatedAt: timestamp,
-    });
+    } as const;
 
     const signedLicense = signLicensePayload({
       schemaVersion: 1,
@@ -68,10 +68,22 @@ export async function POST(request: NextRequest) {
       expiresAt: activatedRecord.expiresAt,
     });
 
+    await saveActivationRecord(activatedRecord);
+
     return NextResponse.json({ signedLicense });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const isSigningKeyError =
+      message.includes("LICENSE_PRIVATE_KEY_PEM") ||
+      message.includes("DECODER routines") ||
+      message.includes("unsupported");
+
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "Activation failed" },
+      {
+        message: isSigningKeyError
+          ? "Activation server signing key is misconfigured. Check LICENSE_PRIVATE_KEY_PEM."
+          : message || "Activation failed",
+      },
       { status: 500 }
     );
   }

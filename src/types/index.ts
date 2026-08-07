@@ -38,6 +38,9 @@ export interface BusinessProfile {
   businessType: string;
   barcodePrefix: string;
   industryMode: IndustryMode;
+  receiptLayout?: "compact" | "standard" | "detailed";
+  receiptPaperWidth?: "58mm" | "80mm";
+  showReceiptBusinessInfo?: boolean;
 }
 
 export interface Product {
@@ -74,6 +77,7 @@ export interface TransactionItem {
   id: string;
   transaction_id: string;
   product_id: string;
+  variant_id?: string | null;
   quantity: number;
   unit_price: number;
   discount: number;
@@ -263,6 +267,7 @@ export interface TransactionItemRow {
   id: string;
   transaction_id: string;
   product_id: string;
+  variant_id: string | null;
   quantity: number;
   unit_price: number;
   discount: number;

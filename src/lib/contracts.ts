@@ -125,6 +125,7 @@ export function normalizeTransactionItemWithProduct(row: TransactionItemWithProd
     id: row.id,
     transaction_id: row.transaction_id,
     product_id: row.product_id,
+    variant_id: row.variant_id,
     quantity: row.quantity,
     unit_price: row.unit_price,
     discount: row.discount ?? 0,

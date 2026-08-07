@@ -27,6 +27,9 @@ export default function SettingsPage() {
     businessType: "Retail",
     barcodePrefix: "BCD",
     industryMode: "general",
+    receiptLayout: "standard",
+    receiptPaperWidth: "80mm",
+    showReceiptBusinessInfo: true,
   });
 
   const [barcodeScannerSettings, setBarcodeScannerSettings] = useState({
@@ -63,7 +66,7 @@ export default function SettingsPage() {
 
   const handleSettingChange = (
     key: keyof BusinessProfile,
-    value: string | number
+    value: string | number | boolean
   ) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
@@ -399,6 +402,64 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Print Settings */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-xl font-semibold text-gray-900 mb-6">
+            Print Layout
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Receipt Layout
+              </label>
+              <select
+                value={settings.receiptLayout || "standard"}
+                onChange={(e) =>
+                  handleSettingChange("receiptLayout", e.target.value)
+                }
+                className="input-base"
+              >
+                <option value="compact">Compact</option>
+                <option value="standard">Standard</option>
+                <option value="detailed">Detailed</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Paper Width
+              </label>
+              <select
+                value={settings.receiptPaperWidth || "80mm"}
+                onChange={(e) =>
+                  handleSettingChange("receiptPaperWidth", e.target.value)
+                }
+                className="input-base"
+              >
+                <option value="58mm">58mm</option>
+                <option value="80mm">80mm</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+            <div>
+              <h3 className="font-medium text-gray-900">Business Header</h3>
+              <p className="text-sm text-gray-600">
+                Show shop name, address, phone, and email on the bill
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={settings.showReceiptBusinessInfo !== false}
+              onChange={(e) =>
+                handleSettingChange("showReceiptBusinessInfo", e.target.checked)
+              }
+              className="w-6 h-6 cursor-pointer"
+            />
           </div>
         </div>
 

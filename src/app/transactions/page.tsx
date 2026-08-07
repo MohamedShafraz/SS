@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth-context";
 interface TransactionItem {
   id: string;
   product_id: string;
+  variant_id?: string | null;
   quantity: number;
   unit_price: number;
   discount: number;
@@ -26,6 +27,8 @@ interface Transaction {
   discount_amount: number;
   tax_amount: number;
   payment_method: string;
+  is_replacement_transaction?: boolean | null;
+  original_return_id?: string | null;
   items?: TransactionItem[];
 }
 
@@ -62,6 +65,8 @@ export default function TransactionsPage() {
             discount_amount: transaction.discount_amount ?? 0,
             tax_amount: transaction.tax_amount ?? 0,
             payment_method: transaction.payment_method,
+            is_replacement_transaction: transaction.is_replacement_transaction ?? false,
+            original_return_id: transaction.original_return_id ?? null,
           }))
         );
       }
@@ -99,6 +104,11 @@ export default function TransactionsPage() {
 
   const totalSales = filteredTransactions.reduce((sum, txn) => sum + txn.total_amount, 0);
   const totalTransactions = filteredTransactions.length;
+  const transactionType = (transaction: Transaction) => {
+    if (transaction.original_return_id && transaction.total_amount < 0) return "Return";
+    if (transaction.is_replacement_transaction) return "Replacement";
+    return "Sale";
+  };
 
   return (
     <MainLayout>
@@ -150,6 +160,9 @@ export default function TransactionsPage() {
                     Amount
                   </th>
                   <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                    Type
+                  </th>
+                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
                     Payment
                   </th>
                   <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
@@ -190,6 +203,19 @@ export default function TransactionsPage() {
                         <p className="font-semibold text-gray-900">
                           {transaction.total_amount}/=
                         </p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                            transactionType(transaction) === "Return"
+                              ? "bg-red-100 text-red-700"
+                              : transactionType(transaction) === "Replacement"
+                              ? "bg-yellow-100 text-yellow-700"
+                              : "bg-gray-100 text-gray-700"
+                          }`}
+                        >
+                          {transactionType(transaction)}
+                        </span>
                       </td>
                       <td className="px-6 py-4">
                         <span

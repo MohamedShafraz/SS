@@ -31,6 +31,7 @@ loadDotEnv();
 
 const activationServerUrl = (process.env.ACTIVATION_SERVER_URL || "").trim();
 const publicKeyPem = (process.env.LICENSE_PUBLIC_KEY_PEM || "").trim();
+const microsoftStoreProductId = (process.env.MICROSOFT_STORE_PRODUCT_ID || "").trim();
 
 if (!activationServerUrl || !publicKeyPem) {
   throw new Error("ACTIVATION_SERVER_URL and LICENSE_PUBLIC_KEY_PEM are required.");
@@ -44,6 +45,9 @@ fs.writeFileSync(
     {
       activationServerUrl,
       licensePublicKeyPem: publicKeyPem,
+      // Optional for Microsoft Store builds. Use the durable add-on Store ID
+      // from Partner Center, for example "9NBLGGH4TNMP".
+      ...(microsoftStoreProductId ? { microsoftStoreProductId } : {}),
     },
     null,
     2
