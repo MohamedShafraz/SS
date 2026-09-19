@@ -6,6 +6,7 @@ import { Trash2, Printer, Check, X, Barcode, Eye, ArrowLeft, ShoppingCart, Rotat
 import toast from "react-hot-toast";
 import { supabase, fetchProductsWithVariants, findVariantByBarcode } from "@/lib/supabase";
 import { BusinessProfile, ProductVariant } from "@/types";
+import { DEFAULT_CURRENCY, discountUnitLabel, formatCurrency } from "@/lib/currency";
 import {
   fetchReturnableTransactionWithItems,
   createReturn,
@@ -25,7 +26,7 @@ interface CartItem {
   quantity: number;
   image_url: string;
   discount: number;
-  discountType: "lkr" | "percentage"; // LKR or percentage
+  discountType: "lkr" | "percentage";
   variant_id?: string;                  // NEW: variant support
   variant_type?: string;                // NEW: e.g., 'size'
   variant_value?: string;               // NEW: e.g., 'M'
@@ -83,13 +84,17 @@ const defaultReceiptSettings: BusinessProfile = {
   phone: "+94 77 712 3456",
   email: "info@business.com",
   taxRate: 5,
-  currency: "/=",
+  currency: DEFAULT_CURRENCY,
   businessType: "Retail",
   barcodePrefix: "BCD",
   industryMode: "general",
   receiptLayout: "standard",
   receiptPaperWidth: "80mm",
   showReceiptBusinessInfo: true,
+};
+
+type HardwareBridge = {
+  listPrinters: () => Promise<Array<{ name: string; isDefault?: boolean }>>;
 };
 
 export default function POSPage() {
@@ -132,8 +137,14 @@ function POSContent() {
   const [replacementCart, setReplacementCart] = useState<CartItem[]>([]);
   
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const scannerCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scannerCheckActiveRef = useRef(false);
+  const scannerInputStartedAtRef = useRef<number | null>(null);
+  const barcodeValueRef = useRef("");
 
-  const currency = receiptSettings.currency || "/=";
+  const currency = receiptSettings.currency || DEFAULT_CURRENCY;
+  const money = useCallback((amount: number | string | null | undefined) => formatCurrency(amount, currency), [currency]);
+  const discountCurrencyLabel = discountUnitLabel(currency);
   const receiptLayout = receiptSettings.receiptLayout || "standard";
   const receiptPaperWidth = receiptSettings.receiptPaperWidth || "80mm";
   const showReceiptBusinessInfo = receiptSettings.showReceiptBusinessInfo !== false;
@@ -528,43 +539,113 @@ function POSContent() {
 
   // Filter products based on search input
   const handleSearchFilter = (searchText: string) => {
+    barcodeValueRef.current = searchText;
     setBarcodeInput(searchText);
   };
 
   useEffect(() => {
     // Focus barcode input on mount
     barcodeInputRef.current?.focus();
+
+    return () => {
+      if (scannerCheckTimerRef.current) clearTimeout(scannerCheckTimerRef.current);
+    };
   }, []);
 
-  const canUsePrint = () => typeof window !== "undefined" && typeof window.print === "function";
+  const getHardwareBridge = () =>
+    (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
 
-  const warnIfPrinterUnavailable = () => {
-    if (!canUsePrint()) {
-      toast.error("Printer is not detected. Check the printer connection and try again.");
+  const warnIfPrinterUnavailable = async () => {
+    if (typeof window === "undefined" || typeof window.print !== "function") {
+      window.alert("Printing is unavailable in this environment.");
       return true;
     }
 
-    return false;
+    const bridge = getHardwareBridge();
+    if (!bridge) {
+      window.alert("Printer detection is available in the MSHPOS desktop app.");
+      return false;
+    }
+
+    try {
+      const printers = await bridge.listPrinters();
+      if (printers.length === 0) {
+        window.alert("No printer is connected. Connect a printer and try again.");
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error("Unable to detect printers:", error);
+      window.alert("Could not detect a printer. Check the printer connection and try again.");
+      return true;
+    }
   };
 
-  const warnIfScannerUnavailable = () => {
-    const nav = navigator as Navigator & { hid?: unknown; usb?: unknown };
-    const hasScannerApi =
-      typeof window !== "undefined" &&
-      ("BarcodeDetector" in window || Boolean(nav.hid) || Boolean(nav.usb));
+  const checkBarcodeReader = async () => {
+    barcodeInputRef.current?.focus();
 
-    if (!hasScannerApi) {
-      toast.error("Scanner is not detected. Reconnect it or type the barcode manually.");
-      barcodeInputRef.current?.focus();
-      return true;
+    if (scannerCheckActiveRef.current) {
+      toast("Scanner check is already active. Scan a barcode now.", { duration: 3000 });
+      return;
     }
 
-    return false;
+    const browserWithDevices = navigator as Navigator & {
+      hid?: { getDevices: () => Promise<Array<unknown>> };
+      usb?: { getDevices: () => Promise<Array<unknown>> };
+    };
+
+    try {
+      const [hidDevices, usbDevices] = await Promise.all([
+        browserWithDevices.hid?.getDevices() ?? Promise.resolve([]),
+        browserWithDevices.usb?.getDevices() ?? Promise.resolve([]),
+      ]);
+
+      if (hidDevices.length > 0 || usbDevices.length > 0) {
+        toast.success("Barcode reader connected. Scan a barcode now.", { duration: 4000 });
+        return;
+      }
+    } catch (error) {
+      console.warn("Unable to query barcode reader devices:", error);
+    }
+
+    scannerCheckActiveRef.current = true;
+    scannerInputStartedAtRef.current = null;
+    barcodeValueRef.current = "";
+    setBarcodeInput("");
+    toast("Ready for scanner input. Scan a barcode within 5 seconds.", { duration: 5000 });
+    scannerCheckTimerRef.current = setTimeout(() => {
+      scannerCheckActiveRef.current = false;
+      toast.error("No barcode detected. Check the reader connection and try again.", {
+        duration: 5000,
+      });
+    }, 5000);
+  };
+
+  const handleBarcodeChange = (value: string) => {
+    if (scannerCheckActiveRef.current && value.length === 1) {
+      scannerInputStartedAtRef.current = performance.now();
+    }
+    barcodeValueRef.current = value;
+    setBarcodeInput(value);
   };
 
   const handleBarcodeInput = async (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
-      const searchLower = barcodeInput.toLowerCase();
+      const scannedValue = barcodeValueRef.current.trim();
+      const scanStartedAt = scannerInputStartedAtRef.current;
+      const isRapidScan =
+        scannerCheckActiveRef.current &&
+        scannedValue.length >= 4 &&
+        scanStartedAt !== null &&
+        performance.now() - scanStartedAt <= 1500;
+
+      if (isRapidScan) {
+        scannerCheckActiveRef.current = false;
+        scannerInputStartedAtRef.current = null;
+        if (scannerCheckTimerRef.current) clearTimeout(scannerCheckTimerRef.current);
+        toast.success("Barcode reader detected");
+      }
+      const searchLower = scannedValue.toLowerCase();
       
       // Try variant barcode first
       const variant = await findVariantByBarcode(searchLower);
@@ -573,6 +654,7 @@ function POSContent() {
         if (product) {
           addToCartWithVariant(product, variant);
           toast.success(`Added ${product.name} - ${variant.variant_value}`);
+          barcodeValueRef.current = "";
           setBarcodeInput("");
           return;
         }
@@ -596,6 +678,7 @@ function POSContent() {
           addToCart(product);
           toast.success(`Added ${product.name}`);
         }
+        barcodeValueRef.current = "";
         setBarcodeInput("");
       } else {
         toast.error("Product not found");
@@ -730,7 +813,7 @@ function POSContent() {
           // Percentage discount can't be >= 100
           validDiscount = Math.min(99.99, validDiscount);
         } else {
-          // LKR discount can't exceed item total
+          // Amount discount can't exceed item total
           validDiscount = Math.min(itemTotal, validDiscount);
         }
 
@@ -752,7 +835,7 @@ function POSContent() {
           // If switching to percentage, ensure it's < 100
           validDiscount = Math.min(99.99, validDiscount);
         } else {
-          // If switching to LKR, ensure it doesn't exceed item total
+          // If switching to amount, ensure it doesn't exceed item total
           validDiscount = Math.min(itemTotal, validDiscount);
         }
 
@@ -778,8 +861,8 @@ function POSContent() {
         const pct = isFinite(rawDiscount) ? rawDiscount : 0;
         itemDiscount = (itemTotal * pct) / 100;
       } else {
-        const lkr = isFinite(rawDiscount) ? rawDiscount : 0;
-        itemDiscount = Math.min(itemTotal, lkr);
+        const amountDiscount = isFinite(rawDiscount) ? rawDiscount : 0;
+        itemDiscount = Math.min(itemTotal, amountDiscount);
       }
 
       subtotal += Math.max(0, itemTotal - itemDiscount);
@@ -792,8 +875,8 @@ function POSContent() {
       const pct = isFinite(rawGlobal) ? rawGlobal : 0;
       globalDiscount = Math.min(subtotal, (subtotal * pct) / 100);
     } else {
-      const lkr = isFinite(rawGlobal) ? rawGlobal : 0;
-      globalDiscount = Math.min(subtotal, lkr);
+      const amountDiscount = isFinite(rawGlobal) ? rawGlobal : 0;
+      globalDiscount = Math.min(subtotal, amountDiscount);
     }
 
     const total = Math.max(0, subtotal - globalDiscount);
@@ -919,7 +1002,7 @@ function POSContent() {
         status: "completed",
       };
 
-      toast.success(`Order completed! Total: ${total}/=`);
+      toast.success(`Order completed! Total: ${money(total)}`);
       setCart([]);
       setDiscount(0);
       setDiscountType("lkr");
@@ -951,12 +1034,12 @@ function POSContent() {
   };
 
   const handlePrint = () => {
-    if (warnIfPrinterUnavailable()) return;
+    void (async () => {
+      if (await warnIfPrinterUnavailable()) return;
 
-    const draftReceipt = createDraftReceipt();
-    if (draftReceipt) {
-      setReceiptPreview(draftReceipt);
-    }
+      const draftReceipt = createDraftReceipt();
+      if (draftReceipt) setReceiptPreview(draftReceipt);
+    })();
   };
 
   const receiptItemSubtotal = (item: CartItem) => {
@@ -980,7 +1063,7 @@ function POSContent() {
           ? `<div class="muted">${item.variant_type}: ${item.variant_value}</div>`
           : "";
         const discountText = isDetailed && item.discount
-          ? `<div class="muted">Discount: ${item.discount}${item.discountType === "percentage" ? "%" : currency}</div>`
+          ? `<div class="muted">Discount: ${item.discount}${item.discountType === "percentage" ? "%" : ` ${discountCurrencyLabel}`}</div>`
           : "";
 
         return `
@@ -989,9 +1072,9 @@ function POSContent() {
               <strong>${item.name}</strong>
               ${variant}
               ${discountText}
-              <div class="muted">${item.quantity} x ${Math.round(item.price)}${currency}</div>
+              <div class="muted">${item.quantity} x ${money(Math.round(item.price))}</div>
             </div>
-            <div>${Math.round(receiptItemSubtotal(item))}${currency}</div>
+            <div>${money(Math.round(receiptItemSubtotal(item)))}</div>
           </div>
         `;
       })
@@ -1032,9 +1115,9 @@ function POSContent() {
             <div class="divider"></div>
             ${rows}
             <div class="divider"></div>
-            <div class="line"><span>Subtotal</span><span>${Math.round(receipt.subtotal)}${currency}</span></div>
-            <div class="line"><span>Discount</span><span>${Math.round(receipt.discount)}${currency}</span></div>
-            <div class="line total"><span>Total</span><span>${Math.round(receipt.total)}${currency}</span></div>
+            <div class="line"><span>Subtotal</span><span>${money(Math.round(receipt.subtotal))}</span></div>
+            <div class="line"><span>Discount</span><span>${money(Math.round(receipt.discount))}</span></div>
+            <div class="line total"><span>Total</span><span>${money(Math.round(receipt.total))}</span></div>
             <div class="divider"></div>
             <div class="center muted">Thank you</div>
           </div>
@@ -1043,8 +1126,8 @@ function POSContent() {
       </html>`;
   };
 
-  const printReceiptPreview = () => {
-    if (!receiptPreview || warnIfPrinterUnavailable()) return;
+  const printReceiptPreview = async () => {
+    if (!receiptPreview || await warnIfPrinterUnavailable()) return;
 
     const printWindow = window.open("", "MSHPOSReceiptPrint", "width=420,height=680");
     if (!printWindow) {
@@ -1101,12 +1184,12 @@ function POSContent() {
                 type="text"
                 placeholder="Scan barcode or search..."
                 value={barcodeInput}
-                onChange={(e) => handleSearchFilter(e.target.value)}
-                onKeyPress={handleBarcodeInput}
+                onChange={(e) => handleBarcodeChange(e.target.value)}
+                onKeyDown={handleBarcodeInput}
                 className="input-base flex-1"
               />
               <button
-                onClick={warnIfScannerUnavailable}
+                onClick={checkBarcodeReader}
                 className="btn-primary"
                 title="Check scanner"
               >
@@ -1165,7 +1248,7 @@ function POSContent() {
                       {product.name}
                     </h3>
                     <p className="text-xs text-gray-600 mb-2">{product.category}</p>
-                    <p className="text-lg font-bold text-blue-600">{product.price}/=</p>
+                    <p className="text-lg font-bold text-blue-600">{money(product.price)}</p>
                     <button
                       onClick={() => {
                         if (product.variants && product.variants.length > 0) {
@@ -1225,7 +1308,7 @@ function POSContent() {
                       </div>
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-gray-600">
-                          {item.price}/=
+                          {money(item.price)}
                         </span>
                         <input
                           type="number"
@@ -1253,7 +1336,7 @@ function POSContent() {
                               // Percentage discount can't be >= 100
                               validDiscount = Math.min(99.99, validDiscount);
                             } else {
-                              // LKR discount can't exceed item total
+                              // Amount discount can't exceed item total
                               validDiscount = Math.min(itemTotal, validDiscount);
                             }
 
@@ -1268,12 +1351,12 @@ function POSContent() {
                           }
                           className="px-2 py-1 border border-gray-300 rounded text-sm bg-white min-w-fit"
                         >
-                          <option value="lkr">/=</option>
+                          <option value="lkr">{discountCurrencyLabel}</option>
                           <option value="percentage">%</option>
                         </select>
                       </div>
                       <p className="text-sm font-semibold text-gray-900">
-                        Subtotal: {(() => {
+                        Subtotal: {money((() => {
                           const itemTotal = Number(item.price || 0) * Number(item.quantity || 0);
                           const rawDiscount = Number(item.discount ?? 0);
                           let itemDiscount = 0;
@@ -1281,11 +1364,11 @@ function POSContent() {
                             const pct = isFinite(rawDiscount) ? rawDiscount : 0;
                             itemDiscount = (itemTotal * pct) / 100;
                           } else {
-                            const lkr = isFinite(rawDiscount) ? rawDiscount : 0;
-                            itemDiscount = Math.min(itemTotal, lkr);
+                            const amountDiscount = isFinite(rawDiscount) ? rawDiscount : 0;
+                            itemDiscount = Math.min(itemTotal, amountDiscount);
                           }
                           return Math.max(0, itemTotal - itemDiscount);
-                        })()}/=
+                        })())}
                       </p>
                     </div>
                   ))}
@@ -1299,7 +1382,7 @@ function POSContent() {
             <div className="space-y-2 mb-4">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Subtotal:</span>
-                <span className="font-medium">{Math.round(subtotal)}/=</span>
+                <span className="font-medium">{money(Math.round(subtotal))}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">Discount:</span>
@@ -1318,7 +1401,7 @@ function POSContent() {
                         // Percentage discount can't be >= 100
                         validDiscount = Math.min(99.99, validDiscount);
                       } else {
-                        // LKR discount can't exceed subtotal
+                        // Amount discount can't exceed subtotal
                         validDiscount = Math.min(subtotal, validDiscount);
                       }
 
@@ -1337,7 +1420,7 @@ function POSContent() {
                         // If switching to percentage, ensure it's < 100
                         validDiscount = Math.min(99.99, validDiscount);
                       } else {
-                        // If switching to LKR, ensure it doesn't exceed subtotal
+                        // If switching to amount, ensure it doesn't exceed subtotal
                         validDiscount = Math.min(subtotal, validDiscount);
                       }
 
@@ -1346,14 +1429,14 @@ function POSContent() {
                     }}
                     className="px-2 py-1 border border-gray-300 rounded text-sm bg-white min-w-fit"
                   >
-                    <option value="lkr">/=</option>
+                    <option value="lkr">{discountCurrencyLabel}</option>
                     <option value="percentage">%</option>
                   </select>
                 </div>
               </div>
               <div className="border-t-2 pt-2 flex justify-between">
                 <span className="font-bold text-gray-900">Total:</span>
-                <span className="text-2xl font-bold text-blue-600">{Math.round(total)}/=</span>
+                <span className="text-2xl font-bold text-blue-600">{money(Math.round(total))}</span>
               </div>
             </div>
 
@@ -1443,7 +1526,7 @@ function POSContent() {
                   </p>
                   <p className="text-sm text-gray-600 mt-2">Total Amount</p>
                   <p className="font-bold text-blue-600 text-lg">
-                    {originalTransaction.total_amount}/=
+                    {money(originalTransaction.total_amount)}
                   </p>
                 </div>
 
@@ -1481,7 +1564,7 @@ function POSContent() {
                         {item.products?.name || "Product"}
                       </p>
                       <p className="text-xs text-gray-600">
-                        Qty: {item.quantity} × {item.unit_price}/= = {item.subtotal}/=
+                        Qty: {item.quantity} × {money(item.unit_price)} = {money(item.subtotal)}
                       </p>
                     </div>
                   </div>
@@ -1574,7 +1657,7 @@ function POSContent() {
                   <p className="font-medium text-sm text-gray-900 line-clamp-1">
                     {product.name}
                   </p>
-                  <p className="text-xs text-gray-600">{product.price}/=</p>
+                  <p className="text-xs text-gray-600">{money(product.price)}</p>
                 </button>
               ))}
             </div>
@@ -1589,7 +1672,7 @@ function POSContent() {
             </h2>
             {replacementCart.length > 0 && (
               <p className="text-xs text-gray-600">
-                Total: {replacementCart.reduce((sum, item) => sum + item.price * item.quantity, 0)}/=
+                Total: {money(replacementCart.reduce((sum, item) => sum + item.price * item.quantity, 0))}
               </p>
             )}
           </div>
@@ -1637,7 +1720,7 @@ function POSContent() {
                       className="w-full px-1 py-1 border border-gray-300 rounded text-xs mb-1"
                     />
                     <div className="flex justify-between text-xs text-gray-600">
-                      <span>{item.price * item.quantity}/=</span>
+                      <span>{money(item.price * item.quantity)}</span>
                     </div>
                   </div>
                 ))}
@@ -1734,15 +1817,14 @@ function POSContent() {
                           {receiptLayout === "detailed" && item.discount > 0 && (
                             <p className="text-xs text-gray-600">
                               Discount: {item.discount}
-                              {item.discountType === "percentage" ? "%" : currency}
+                              {item.discountType === "percentage" ? "%" : ` ${discountCurrencyLabel}`}
                             </p>
                           )}
                           <p className="text-xs text-gray-600">
-                            {item.quantity} x {Math.round(item.price)}
-                            {currency}
+                            {item.quantity} x {money(Math.round(item.price))}
                           </p>
                         </div>
-                        <span>{Math.round(receiptItemSubtotal(item))}{currency}</span>
+                        <span>{money(Math.round(receiptItemSubtotal(item)))}</span>
                       </div>
                     </div>
                   ))}
@@ -1751,15 +1833,15 @@ function POSContent() {
                 <div className="space-y-1 text-sm">
                   <div className="flex justify-between">
                     <span>Subtotal</span>
-                    <span>{Math.round(receiptPreview.subtotal)}{currency}</span>
+                    <span>{money(Math.round(receiptPreview.subtotal))}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Discount</span>
-                    <span>{Math.round(receiptPreview.discount)}{currency}</span>
+                    <span>{money(Math.round(receiptPreview.discount))}</span>
                   </div>
                   <div className="flex justify-between border-t pt-2 text-lg font-bold">
                     <span>Total</span>
-                    <span>{Math.round(receiptPreview.total)}{currency}</span>
+                    <span>{money(Math.round(receiptPreview.total))}</span>
                   </div>
                 </div>
 
@@ -1838,11 +1920,11 @@ function POSContent() {
               <div className="grid grid-cols-3 gap-4">
                 <div className="bg-gray-50 rounded-lg p-4">
                   <p className="text-gray-600 text-sm font-medium mb-1">Selling Price</p>
-                  <p className="text-2xl font-bold text-green-600">{selectedProduct.price}/=</p>
+                  <p className="text-2xl font-bold text-green-600">{money(selectedProduct.price)}</p>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-4">
                   <p className="text-gray-600 text-sm font-medium mb-1">Cost</p>
-                  <p className="text-2xl font-bold text-orange-600">{selectedProduct.cost}/=</p>
+                  <p className="text-2xl font-bold text-orange-600">{money(selectedProduct.cost)}</p>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-4">
                   <p className="text-gray-600 text-sm font-medium mb-1">Margin</p>
@@ -1896,7 +1978,7 @@ function POSContent() {
               <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
                 <p className="text-gray-600 text-sm font-medium mb-2">Profit per Unit</p>
                 <p className="text-3xl font-bold text-blue-600">
-                  {selectedProduct.price - selectedProduct.cost}/=
+                  {money(selectedProduct.price - selectedProduct.cost)}
                 </p>
               </div>
 
@@ -1998,7 +2080,7 @@ function POSContent() {
                       </div>
                       <div className="text-right">
                         <p className="font-semibold text-gray-900">
-                          {pendingProduct.price + variant.price_adjustment}/=
+                          {money(pendingProduct.price + variant.price_adjustment)}
                         </p>
                         {variant.price_adjustment !== 0 && (
                           <p className="text-xs text-gray-500">

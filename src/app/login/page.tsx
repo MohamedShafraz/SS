@@ -15,17 +15,6 @@ export default function LoginPage() {
   const router = useRouter();
 
   useEffect(() => {
-    fetch("/api/license/status")
-      .then((response) => response.json())
-      .then((status) => {
-        if (!status.activated || status.usersCount === 0) {
-          router.replace("/activate");
-        }
-      })
-      .catch(() => router.replace("/activate"));
-  }, [router]);
-
-  useEffect(() => {
     if (!authLoading && isAuthenticated && user) {
       router.replace(user.role === "cashier" ? "/pos" : "/dashboard");
     }

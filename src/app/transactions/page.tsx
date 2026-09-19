@@ -6,6 +6,8 @@ import { Eye, Download, Printer } from "lucide-react";
 import toast from "react-hot-toast";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
+import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
+import type { BusinessProfile } from "@/types";
 
 interface TransactionItem {
   id: string;
@@ -38,6 +40,7 @@ export default function TransactionsPage() {
   const [loading, setLoading] = useState(true);
   const [selectedTransaction, setSelectedTransaction] =
     useState<Transaction | null>(null);
+  const [currency, setCurrency] = useState(DEFAULT_CURRENCY);
 
   const fetchTransactions = useCallback(async (isActive: () => boolean = () => true) => {
     try {
@@ -91,6 +94,31 @@ export default function TransactionsPage() {
     };
   }, [fetchTransactions]);
 
+  useEffect(() => {
+    let active = true;
+
+    fetch("/api/settings")
+      .then((response) => response.json())
+      .then((result) => {
+        const settings = result.settings as Partial<BusinessProfile> | null;
+        if (active && settings?.currency) setCurrency(settings.currency);
+      })
+      .catch(() => {
+        const stored = localStorage.getItem("posSettings");
+        if (!stored) return;
+        try {
+          const settings = JSON.parse(stored) as Partial<BusinessProfile>;
+          if (settings.currency) setCurrency(settings.currency);
+        } catch {
+          // Keep default currency if stored settings cannot be parsed.
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const filteredTransactions = transactions;
   const isManagerDayScope = user?.role === "manager";
 
@@ -137,7 +165,7 @@ export default function TransactionsPage() {
             <h3 className="text-gray-600 text-sm font-medium mb-2">
               Total Sales
             </h3>
-            <p className="text-3xl font-bold text-green-600">{totalSales}/=</p>
+            <p className="text-3xl font-bold text-green-600">{formatCurrency(totalSales, currency)}</p>
           </div>
         </div>
 
@@ -201,7 +229,7 @@ export default function TransactionsPage() {
                       </td> */}
                       <td className="px-6 py-4">
                         <p className="font-semibold text-gray-900">
-                          {transaction.total_amount}/=
+                          {formatCurrency(transaction.total_amount, currency)}
                         </p>
                       </td>
                       <td className="px-6 py-4">
@@ -304,12 +332,12 @@ export default function TransactionsPage() {
                       <tr key={idx} className="border-b border-gray-200">
                         <td className="py-2">{item.product_id || "Product"}</td>
                         <td className="text-center py-2">{item.quantity}</td>
-                        <td className="text-right py-2">{item.unit_price}/=</td>
+                        <td className="text-right py-2">{formatCurrency(item.unit_price, currency)}</td>
                         <td className="text-right py-2">
-                          {item.discount > 0 ? `${item.discount}/=` : "-"}
+                          {item.discount > 0 ? formatCurrency(item.discount, currency) : "-"}
                         </td>
                         <td className="text-right py-2 font-semibold">
-                          {item.subtotal}/=
+                          {formatCurrency(item.subtotal, currency)}
                         </td>
                       </tr>
                     ))}
@@ -322,25 +350,25 @@ export default function TransactionsPage() {
                 <div className="flex justify-between">
                   <span className="text-gray-600">Subtotal:</span>
                   <span className="font-semibold">
-                    {(selectedTransaction.total_amount - selectedTransaction.tax_amount + selectedTransaction.discount_amount)?.toFixed(2)}/=
+                    {formatCurrency(selectedTransaction.total_amount - selectedTransaction.tax_amount + selectedTransaction.discount_amount, currency)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Discount:</span>
                   <span className="font-semibold">
                     {selectedTransaction.discount_amount > 0
-                      ? `${selectedTransaction.discount_amount}/=`
+                      ? formatCurrency(selectedTransaction.discount_amount, currency)
                       : "-"}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Tax (5%):</span>
-                  <span className="font-semibold">{selectedTransaction.tax_amount?.toFixed(2)}/=</span>
+                  <span className="font-semibold">{formatCurrency(selectedTransaction.tax_amount, currency)}</span>
                 </div>
                 <div className="border-t pt-2 flex justify-between text-lg">
                   <span className="font-bold">Total:</span>
                   <span className="font-bold text-blue-600">
-                    {selectedTransaction.total_amount?.toFixed(2)}/=
+                    {formatCurrency(selectedTransaction.total_amount, currency)}
                   </span>
                 </div>
               </div>

@@ -15,11 +15,6 @@ async function parseJsonBody(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const db = readDb();
-  const activated = db.licenses.some((license) => license.status === "active");
-
-  if (!activated) {
-    return NextResponse.json({ message: "Activate the app before creating the first admin" }, { status: 403 });
-  }
 
   if (db.users.length > 0) {
     return NextResponse.json({ message: "First admin already exists" }, { status: 409 });

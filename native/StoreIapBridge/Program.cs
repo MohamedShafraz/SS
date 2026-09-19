@@ -26,7 +26,7 @@ internal static class Program
                 InitializeWithWindow.Initialize(context, options.Hwnd);
             }
 
-            var alreadyLicensed = await HasActiveAddOnLicenseAsync(context, options.ProductId);
+            var alreadyLicensed = await HasActiveLicenseAsync(context, options.ProductId);
             if (alreadyLicensed)
             {
                 return WriteJson(0, BridgeResult.Active("Already purchased."));
@@ -40,7 +40,7 @@ internal static class Program
             var purchase = await context.RequestPurchaseAsync(options.ProductId);
             if (purchase.Status is StorePurchaseStatus.Succeeded or StorePurchaseStatus.AlreadyPurchased)
             {
-                var licensedAfterPurchase = await HasActiveAddOnLicenseAsync(context, options.ProductId);
+                var licensedAfterPurchase = await HasActiveLicenseAsync(context, options.ProductId);
                 return WriteJson(
                     0,
                     licensedAfterPurchase
@@ -62,17 +62,22 @@ internal static class Program
         }
     }
 
-    private static async Task<bool> HasActiveAddOnLicenseAsync(StoreContext context, string productId)
+    private static async Task<bool> HasActiveLicenseAsync(StoreContext context, string productId)
     {
         var license = await context.GetAppLicenseAsync();
 
-        if (!license.IsActive)
+        if (license.IsActive)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(productId))
         {
             return false;
         }
 
-        // ProductId must be the Store ID of the durable add-on/IAP created in
-        // Partner Center, for example "9NBLGGH4TNMP". Do not use a display name.
+        // ProductId can point to the app's Store ID or a durable add-on/IAP.
+        // Prefer the app license first, then fall back to add-on entitlement checks.
         return license.AddOnLicenses.TryGetValue(productId, out var addOnLicense)
             && addOnLicense.IsActive;
     }

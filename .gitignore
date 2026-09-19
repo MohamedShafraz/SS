@@ -18,6 +18,8 @@
 !/build/
 /build/*
 !/build/icon.ico
+!/build/appx/
+!/build/appx/*.png
 /release/
 /data/
 /client-build/data/
@@ -74,4 +76,5 @@ native/**/obj/
 # Keep app icon if used by website/package metadata
 !/build/
 !/build/icon.ico
-/build/*
+!/build/appx/
+!/build/appx/*.png

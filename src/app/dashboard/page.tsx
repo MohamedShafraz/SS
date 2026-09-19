@@ -26,7 +26,8 @@ import {
 import { supabase } from "@/lib/supabase";
 import { AuthContext } from "@/lib/auth-context";
 import { getCategoryPresets, getStoredIndustryMode } from "@/lib/industry-presets";
-import type { IndustryMode } from "@/types";
+import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
+import type { BusinessProfile, IndustryMode } from "@/types";
 
 // Demo data (no longer used - all data is fetched from database)
 
@@ -39,12 +40,38 @@ export default function Dashboard() {
   const [transactionItems, setTransactionItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [industryMode, setIndustryMode] = useState<IndustryMode>("general");
+  const [currency, setCurrency] = useState(DEFAULT_CURRENCY);
 
   const categoryPresets = getCategoryPresets(industryMode);
   const isManagerDayScope = authContext?.user?.role === "manager";
 
   useEffect(() => {
     setIndustryMode(getStoredIndustryMode());
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    fetch("/api/settings")
+      .then((response) => response.json())
+      .then((result) => {
+        const settings = result.settings as Partial<BusinessProfile> | null;
+        if (active && settings?.currency) setCurrency(settings.currency);
+      })
+      .catch(() => {
+        const stored = localStorage.getItem("posSettings");
+        if (!stored) return;
+        try {
+          const settings = JSON.parse(stored) as Partial<BusinessProfile>;
+          if (settings.currency) setCurrency(settings.currency);
+        } catch {
+          // Keep default currency if stored settings cannot be parsed.
+        }
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -332,7 +359,7 @@ export default function Dashboard() {
   const metrics = [
     {
       title: "Total Sales",
-      value: `${totalSales}/=`,
+      value: formatCurrency(totalSales, currency),
       change: "0%",
       icon: ShoppingCart,
       color: "bg-blue-100",
@@ -340,7 +367,7 @@ export default function Dashboard() {
     },
     {
       title: "Total Profit",
-      value: `${totalProfit}/=`,
+      value: formatCurrency(totalProfit, currency),
       change: "0%",
       icon: TrendingUp,
       color: "bg-green-100",
@@ -348,7 +375,7 @@ export default function Dashboard() {
     },
     {
       title: "Total Loss",
-      value: `${totalLoss}/=`,
+      value: formatCurrency(totalLoss, currency),
       change: "0%",
       icon: TrendingDown,
       color: "bg-red-100",
@@ -356,7 +383,7 @@ export default function Dashboard() {
     },
     {
       title: "Inventory Value",
-      value: `${inventoryValue}/=`,
+      value: formatCurrency(inventoryValue, currency),
       change: "0%",
       icon: Package,
       color: "bg-purple-100",

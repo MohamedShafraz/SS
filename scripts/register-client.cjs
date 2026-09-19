@@ -166,7 +166,7 @@ const settings = {
   phone: arg("phone", ""),
   email: arg("email", ""),
   taxRate: Number(arg("tax-rate", "5")),
-  currency: arg("currency", "/="),
+  currency: arg("currency", "LKR"),
   businessType: arg("business-type", "Retail"),
   barcodePrefix: arg("barcode-prefix", "BCD"),
   industryMode: arg("industry", "general"),

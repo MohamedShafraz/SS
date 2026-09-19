@@ -121,12 +121,12 @@ export async function middleware(request: NextRequest) {
     );
   }
 
-  if (pathname.startsWith("/register") || pathname.startsWith("/payment")) {
-    return NextResponse.redirect(new URL("/activate", request.url));
+  if (pathname.startsWith("/register") || pathname.startsWith("/payment") || pathname === "/activate") {
+    return NextResponse.redirect(new URL("/login", request.url));
   }
 
   // Allow login page without authentication
-  if (pathname === "/login" || pathname === "/" || pathname === "/activate") {
+  if (pathname === "/login" || pathname === "/") {
     return NextResponse.next();
   }
 

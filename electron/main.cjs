@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const { fork, spawn } = require("child_process");
 const path = require("path");
 const net = require("net");
@@ -6,6 +6,49 @@ const fs = require("fs");
 
 let serverProcess = null;
 let mainWindow = null;
+
+ipcMain.handle("hardware:list-printers", async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return [];
+  const printers = await mainWindow.webContents.getPrintersAsync();
+  return printers.map((printer) => ({
+    name: printer.name,
+    displayName: printer.displayName,
+    isDefault: printer.isDefault,
+  }));
+});
+
+ipcMain.handle("hardware:print-barcode", async (_event, { html, printerName }) => {
+  if (!mainWindow || mainWindow.isDestroyed() || typeof html !== "string" || !html.trim()) {
+    return { success: false, error: "Printing is unavailable" };
+  }
+
+  const printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+  try {
+    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    const printers = await mainWindow.webContents.getPrintersAsync();
+    const printer = printers.find((item) => item.name === printerName) ||
+      printers.find((item) => item.isDefault) || printers[0];
+
+    if (!printer) return { success: false, error: "No printer is connected" };
+
+    await new Promise((resolve, reject) => {
+      printWindow.webContents.print(
+        { silent: true, deviceName: printer.name, printBackground: true },
+        (success, failureReason) => {
+          if (success) resolve();
+          else reject(new Error(failureReason || "The printer rejected the job"));
+        }
+      );
+    });
+
+    return { success: true, printerName: printer.displayName || printer.name };
+  } catch (error) {
+    console.error("Unable to print barcode:", error);
+    return { success: false, error: error.message || "Unable to print barcode" };
+  } finally {
+    if (!printWindow.isDestroyed()) printWindow.close();
+  }
+});
 
 const AGREEMENT_VERSION = 1;
 const AGREEMENT_TEXT =
@@ -116,7 +159,7 @@ async function requireUsageAgreement(parentWindow) {
 function getMicrosoftStoreProductId() {
   const licenseConfig = readLicenseConfig();
 
-  // Put your Microsoft Store add-on/Product ID in one of these places:
+  // Put your Microsoft Store app or add-on Product ID in one of these places:
   // 1. MICROSOFT_STORE_PRODUCT_ID at build/runtime, or
   // 2. client-build/license-config.json as { "microsoftStoreProductId": "YOUR_STORE_ID" }.
   return (
@@ -249,7 +292,6 @@ async function ensureMicrosoftStoreLicense(parentWindow) {
 async function startServer() {
   const port = await findFreePort();
   const userData = app.getPath("userData");
-  const licenseConfig = readLicenseConfig();
   copyInitialDatabaseIfNeeded();
 
   serverProcess = fork(serverPath(), [], {
@@ -260,10 +302,6 @@ async function startServer() {
       HOSTNAME: "127.0.0.1",
       POS_LOCAL_DB_PATH: path.join(userData, "pos-local-db.sqlite"),
       JWT_SECRET: process.env.JWT_SECRET || "offline-pos-local-session-secret-change-before-client-build",
-      ACTIVATION_SERVER_URL:
-        process.env.ACTIVATION_SERVER_URL || licenseConfig.activationServerUrl || "",
-      LICENSE_PUBLIC_KEY_PEM:
-        process.env.LICENSE_PUBLIC_KEY_PEM || licenseConfig.licensePublicKeyPem || "",
       NODE_ENV: "production",
       ELECTRON_RUN_AS_NODE: "1",
     },
@@ -290,6 +328,7 @@ async function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: path.join(__dirname, "preload.cjs"),
     },
   });
 

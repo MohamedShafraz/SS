@@ -29,13 +29,7 @@ function loadDotEnv() {
 
 loadDotEnv();
 
-const activationServerUrl = (process.env.ACTIVATION_SERVER_URL || "").trim();
-const publicKeyPem = (process.env.LICENSE_PUBLIC_KEY_PEM || "").trim();
 const microsoftStoreProductId = (process.env.MICROSOFT_STORE_PRODUCT_ID || "").trim();
-
-if (!activationServerUrl || !publicKeyPem) {
-  throw new Error("ACTIVATION_SERVER_URL and LICENSE_PUBLIC_KEY_PEM are required.");
-}
 
 const outFile = path.join(process.cwd(), "client-build", "license-config.json");
 fs.mkdirSync(path.dirname(outFile), { recursive: true });
@@ -43,10 +37,6 @@ fs.writeFileSync(
   outFile,
   JSON.stringify(
     {
-      activationServerUrl,
-      licensePublicKeyPem: publicKeyPem,
-      // Optional for Microsoft Store builds. Use the durable add-on Store ID
-      // from Partner Center, for example "9NBLGGH4TNMP".
       ...(microsoftStoreProductId ? { microsoftStoreProductId } : {}),
     },
     null,

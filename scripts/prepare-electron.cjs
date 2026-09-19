@@ -29,9 +29,8 @@ if (!fs.existsSync(initialDb)) {
 }
 
 if (!fs.existsSync(licenseConfig)) {
-  throw new Error(
-    "Missing client-build/license-config.json. Run npm.cmd run write-license-config after setting ACTIVATION_SERVER_URL and LICENSE_PUBLIC_KEY_PEM."
-  );
+  fs.mkdirSync(path.dirname(licenseConfig), { recursive: true });
+  fs.writeFileSync(licenseConfig, JSON.stringify({}, null, 2));
 }
 
 copyDir(staticSource, staticTarget);

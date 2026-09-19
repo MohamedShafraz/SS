@@ -14,10 +14,11 @@
     "write-license-config": "node scripts/write-license-config.cjs",
     "register-client": "node scripts/register-client.cjs",
     "prepare-electron": "node scripts/prepare-electron.cjs",
+    "create-appx-assets": "node scripts/create-appx-assets.cjs",
     "build:store-iap": "dotnet publish native/StoreIapBridge/StoreIapBridge.csproj -c Release -r win-x64",
-    "dist:win": "npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && electron-builder --win nsis",
-    "dist:store": "npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && electron-builder --win appx",
-    "pack:win": "npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && electron-builder --win dir"
+    "dist:win": "npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && npx.cmd --no-install electron-builder --win nsis",
+    "dist:store": "npm.cmd run create-appx-assets && npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && npx.cmd --no-install electron-builder --win appx",
+    "pack:win": "npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && npx.cmd --no-install electron-builder --win dir"
   },
   "main": "electron/main.cjs",
   "build": {

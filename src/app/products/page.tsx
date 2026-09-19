@@ -1,13 +1,21 @@
 "use client";
 
 import { MainLayout } from "@/components/layout";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, Edit, Trash2, Barcode } from "lucide-react";
+import JsBarcode from "jsbarcode";
 import toast from "react-hot-toast";
 import { supabase, getProductVariants } from "@/lib/supabase";
 import { VariantManager } from "@/components/VariantManager";
-import { IndustryMode, ProductVariant } from "@/types";
+import { BusinessProfile, IndustryMode, ProductVariant } from "@/types";
 import { getCategoryPresets, getStoredIndustryMode } from "@/lib/industry-presets";
+import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
+
+type HardwarePrinter = { name: string; displayName?: string; isDefault?: boolean };
+type HardwareBridge = {
+  listPrinters: () => Promise<HardwarePrinter[]>;
+  printBarcode: (html: string, printerName?: string) => Promise<{ success: boolean; printerName?: string; error?: string }>;
+};
 
 interface Product {
   id: string;
@@ -30,14 +38,92 @@ export default function ProductsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [industryMode, setIndustryMode] = useState<IndustryMode>("general");
+  const [settings, setSettings] = useState<Pick<BusinessProfile, "currency" | "barcodePrefix">>({
+    currency: DEFAULT_CURRENCY,
+    barcodePrefix: "BCD",
+  });
+  const [barcodeProduct, setBarcodeProduct] = useState<Product | null>(null);
+  const [printers, setPrinters] = useState<HardwarePrinter[]>([]);
+  const [printingBarcode, setPrintingBarcode] = useState(false);
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [variantsLoading, setVariantsLoading] = useState(false);
+  const barcodePreviewRef = useRef<SVGSVGElement>(null);
+  const barcodeStickerRef = useRef<SVGSVGElement>(null);
 
   const categories = getCategoryPresets(industryMode);
 
   useEffect(() => {
     setIndustryMode(getStoredIndustryMode());
   }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    fetch("/api/settings")
+      .then((response) => response.json())
+      .then((result) => {
+        if (!active || !result.settings) return;
+        setSettings((prev) => ({ ...prev, ...result.settings }));
+      })
+      .catch(() => {
+        const stored = localStorage.getItem("posSettings");
+        if (!stored) return;
+        try {
+          setSettings((prev) => ({ ...prev, ...JSON.parse(stored) }));
+        } catch {
+          // Keep defaults if stored settings cannot be parsed.
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const createBarcodeValue = useCallback(() => {
+    const prefix = settings.barcodePrefix?.trim() || "BCD";
+    return `${prefix}-${Date.now()}`;
+  }, [settings.barcodePrefix]);
+
+  useEffect(() => {
+    if (!showForm || !barcodePreviewRef.current) return;
+
+    const value = formData.barcode?.trim();
+    if (!value) {
+      barcodePreviewRef.current.innerHTML = "";
+      return;
+    }
+
+    try {
+      JsBarcode(barcodePreviewRef.current, value, {
+        format: "CODE128",
+        width: 2,
+        height: 72,
+        displayValue: true,
+        margin: 8,
+        fontSize: 14,
+      });
+    } catch {
+      barcodePreviewRef.current.innerHTML = "";
+    }
+  }, [formData.barcode, showForm]);
+
+  useEffect(() => {
+    if (!barcodeProduct || !barcodeStickerRef.current) return;
+
+    try {
+      JsBarcode(barcodeStickerRef.current, barcodeProduct.barcode, {
+        format: "CODE128",
+        width: 2,
+        height: 80,
+        displayValue: true,
+        margin: 8,
+        fontSize: 14,
+      });
+    } catch {
+      barcodeStickerRef.current.innerHTML = "";
+    }
+  }, [barcodeProduct]);
 
   const fetchProducts = useCallback(async (isActive: () => boolean = () => true) => {
     try {
@@ -105,7 +191,11 @@ export default function ProductsPage() {
 
   const handleAddProduct = () => {
     setEditingId(null);
-    setFormData({});
+    setVariants([]);
+    setFormData({
+      barcode: createBarcodeValue(),
+      sku: `SKU-${Date.now()}`,
+    });
     setShowForm(true);
   };
 
@@ -169,7 +259,7 @@ export default function ProductsPage() {
             cost: formData.cost,
             quantity: Math.max(0, formData.quantity || 0),
             image_url: formData.image_url ?? null,
-            barcode: formData.barcode || `BCD-${Date.now()}`,
+            barcode: formData.barcode || createBarcodeValue(),
             sku: formData.sku || `SKU-${Date.now()}`,
           },
         ]);
@@ -210,8 +300,46 @@ export default function ProductsPage() {
   };
 
   const generateBarcodeSticker = (product: Product) => {
-    toast.success(`Barcode sticker generated for ${product.name}`);
-    // In a real application, this would use jsbarcode to generate and print
+    setBarcodeProduct(product);
+  };
+
+  useEffect(() => {
+    if (!barcodeProduct) {
+      setPrinters([]);
+      return;
+    }
+
+    const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
+    bridge?.listPrinters().then(setPrinters).catch((error) => {
+      console.error("Unable to detect printers:", error);
+      setPrinters([]);
+    });
+  }, [barcodeProduct]);
+
+  const printBarcode = async () => {
+    if (!barcodeProduct || !barcodeStickerRef.current) return;
+
+    setPrintingBarcode(true);
+    try {
+      const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
+      const printer = printers.find((item) => item.isDefault) || printers[0];
+      const labelHtml = `<!doctype html><html><head><style>body{font-family:Arial,sans-serif;text-align:center;margin:12mm}svg{max-width:100%}</style></head><body><h3>${barcodeProduct.name}</h3>${barcodeStickerRef.current.outerHTML}<p>${barcodeProduct.sku || ""}</p></body></html>`;
+
+      if (bridge && printer) {
+        const result = await bridge.printBarcode(labelHtml, printer.name);
+        if (!result.success) throw new Error(result.error || "Unable to print barcode");
+        toast.success(`Barcode sent to ${result.printerName || printer.displayName || printer.name}`);
+      } else if (typeof window.print === "function") {
+        window.print();
+      } else {
+        toast.error("No printer detected");
+      }
+    } catch (error) {
+      console.error("Unable to print barcode:", error);
+      toast.error(error instanceof Error ? error.message : "Unable to print barcode");
+    } finally {
+      setPrintingBarcode(false);
+    }
   };
 
   return (
@@ -334,10 +462,10 @@ export default function ProductsPage() {
                           {product.category}
                         </td>
                         <td className="px-6 py-4 text-sm font-semibold text-gray-900">
-                          {product.price}/=
+                          {formatCurrency(product.price, settings.currency)}
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-600">
-                          {product.cost}/=
+                          {formatCurrency(product.cost, settings.currency)}
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-600">
                           <span
@@ -525,6 +653,41 @@ export default function ProductsPage() {
                   </div>
 
                   <div>
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <label className="block text-sm font-medium text-gray-900">
+                        Barcode
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFormData({ ...formData, barcode: createBarcodeValue() })
+                        }
+                        className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                      >
+                        Generate
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={formData.barcode || ""}
+                      onChange={(e) =>
+                        setFormData({ ...formData, barcode: e.target.value })
+                      }
+                      className="input-base"
+                      placeholder="Scan or enter barcode"
+                    />
+                    <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 overflow-x-auto">
+                      {formData.barcode ? (
+                        <svg ref={barcodePreviewRef} className="mx-auto max-w-full" />
+                      ) : (
+                        <p className="py-8 text-center text-sm text-gray-500">
+                          Enter a barcode to preview it
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
                     <label className="block text-sm font-medium text-gray-900 mb-2">
                       Product Image
                     </label>
@@ -607,6 +770,61 @@ export default function ProductsPage() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {barcodeProduct && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg max-w-md w-full p-6">
+              <div className="flex justify-between items-start gap-4 mb-5">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">Barcode Preview</h2>
+                  <p className="text-sm text-gray-600">{barcodeProduct.name}</p>
+                </div>
+                <button
+                  onClick={() => setBarcodeProduct(null)}
+                  className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
+                >
+                  X
+                </button>
+              </div>
+
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 overflow-x-auto">
+                <svg ref={barcodeStickerRef} className="mx-auto max-w-full" />
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-gray-500">SKU</p>
+                  <p className="font-semibold text-gray-900 break-all">{barcodeProduct.sku || "-"}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Barcode</p>
+                  <p className="font-semibold text-gray-900 break-all">{barcodeProduct.barcode}</p>
+                </div>
+              </div>
+
+              <p className="mt-4 text-xs text-gray-500">
+                {printers.length > 0
+                  ? `Printer detected: ${(printers.find((printer) => printer.isDefault) || printers[0]).displayName || (printers.find((printer) => printer.isDefault) || printers[0]).name}`
+                  : "No desktop printer detected. Browser printing will be used."}
+              </p>
+
+              <button
+                onClick={printBarcode}
+                disabled={printingBarcode}
+                className="btn-primary mt-4 w-full disabled:opacity-50"
+              >
+                {printingBarcode ? "Printing..." : "Print Barcode"}
+              </button>
+
+              <button
+                onClick={() => setBarcodeProduct(null)}
+                className="btn-secondary mt-6 w-full"
+              >
+                Close
+              </button>
             </div>
           </div>
         )}

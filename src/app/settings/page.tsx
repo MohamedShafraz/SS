@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Save, AlertCircle, Users, UserPlus, RotateCcw, ShieldCheck } from "lucide-react";
 import toast from "react-hot-toast";
 import { SHOP_TEMPLATES } from "@/lib/shop-offerings";
+import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
 
 interface ManagedUser {
   id: string;
@@ -23,7 +24,7 @@ export default function SettingsPage() {
     phone: "+94 77 712 3456",
     email: "info@business.com",
     taxRate: 5,
-    currency: "/=",
+    currency: DEFAULT_CURRENCY,
     businessType: "Retail",
     barcodePrefix: "BCD",
     industryMode: "general",
@@ -357,15 +358,35 @@ export default function SettingsPage() {
                 <label className="block text-sm font-medium text-gray-900 mb-2">
                   Currency
                 </label>
-                <input
-                  type="text"
-                  value={settings.currency}
-                  onChange={(e) =>
-                    handleSettingChange("currency", e.target.value)
-                  }
+                <select
+                  value={CURRENCY_OPTIONS.some((item) => item.code === settings.currency) ? settings.currency : "custom"}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    handleSettingChange("currency", value === "custom" ? settings.currency || DEFAULT_CURRENCY : value);
+                  }}
                   className="input-base"
-                  maxLength={3}
-                />
+                >
+                  {CURRENCY_OPTIONS.map((currency) => (
+                    <option key={currency.code} value={currency.code}>
+                      {currency.label}
+                    </option>
+                  ))}
+                  <option value="custom">Custom symbol</option>
+                </select>
+                {!CURRENCY_OPTIONS.some((item) => item.code === settings.currency) && (
+                  <input
+                    type="text"
+                    value={settings.currency}
+                    onChange={(e) =>
+                      handleSettingChange("currency", e.target.value)
+                    }
+                    className="input-base mt-2"
+                    placeholder="Currency symbol or code"
+                  />
+                )}
+                <p className="text-xs text-gray-600 mt-1">
+                  Preview: {formatCurrency(1250, settings.currency)}
+                </p>
               </div>
             </div>
 
