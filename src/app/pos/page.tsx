@@ -75,6 +75,8 @@ interface ReceiptPreview {
   discount: number;
   total: number;
   paymentMethod: string;
+  amountPaid?: number;
+  balanceAmount?: number;
   status: "draft" | "completed";
 }
 
@@ -91,6 +93,11 @@ const defaultReceiptSettings: BusinessProfile = {
   receiptLayout: "standard",
   receiptPaperWidth: "80mm",
   showReceiptBusinessInfo: true,
+  logoImage: "",
+  showReceiptFooter: true,
+  receiptFooterMode: "return_days",
+  receiptFooterDays: 7,
+  receiptFooterText: "",
 };
 
 type HardwareBridge = {
@@ -120,6 +127,7 @@ function POSContent() {
   const [discount, setDiscount] = useState(0);
   const [discountType, setDiscountType] = useState<"lkr" | "percentage">("lkr");
   const [paymentMethod, setPaymentMethod] = useState("cash");
+  const [amountPaid, setAmountPaid] = useState(0);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showVariantSelector, setShowVariantSelector] = useState(false);
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
@@ -148,6 +156,17 @@ function POSContent() {
   const receiptLayout = receiptSettings.receiptLayout || "standard";
   const receiptPaperWidth = receiptSettings.receiptPaperWidth || "80mm";
   const showReceiptBusinessInfo = receiptSettings.showReceiptBusinessInfo !== false;
+  const receiptFooterText = useMemo(() => {
+    if (receiptSettings.showReceiptFooter === false) return "";
+    const days = Math.max(1, Number(receiptSettings.receiptFooterDays || 7));
+    if (receiptSettings.receiptFooterMode === "valid_days") {
+      return `This bill is valid for ${days} day${days === 1 ? "" : "s"}.`;
+    }
+    if (receiptSettings.receiptFooterMode === "custom") {
+      return receiptSettings.receiptFooterText || "";
+    }
+    return `Return allowed within ${days} day${days === 1 ? "" : "s"}.`;
+  }, [receiptSettings]);
 
   const fetchProducts = useCallback(async (isActive: () => boolean = () => true) => {
     try {
@@ -891,6 +910,13 @@ function POSContent() {
       return;
     }
 
+    const paid = paymentMethod === "cash" ? Number(amountPaid || 0) : total;
+    const balance = paymentMethod === "cash" ? Math.max(0, paid - total) : 0;
+    if (paymentMethod === "cash" && paid < total) {
+      toast.error("Customer money is less than the total");
+      return;
+    }
+
     try {
       // Save transaction to local offline storage
       const { data: transactionData, error: transactionError } = await supabase
@@ -901,6 +927,8 @@ function POSContent() {
             total_amount: total,
             discount_amount: globalDiscount,
             tax_amount: 0,
+            amount_paid: paid,
+            balance_amount: balance,
             payment_method: paymentMethod,
             status: "completed",
             stripe_session_id: null,
@@ -999,6 +1027,8 @@ function POSContent() {
         discount: globalDiscount,
         total,
         paymentMethod,
+        amountPaid: paid,
+        balanceAmount: balance,
         status: "completed",
       };
 
@@ -1006,6 +1036,7 @@ function POSContent() {
       setCart([]);
       setDiscount(0);
       setDiscountType("lkr");
+      setAmountPaid(0);
       barcodeInputRef.current?.focus();
 
       setReceiptPreview(completedReceipt);
@@ -1029,6 +1060,8 @@ function POSContent() {
       discount: globalDiscount,
       total,
       paymentMethod,
+      amountPaid: paymentMethod === "cash" ? Number(amountPaid || 0) : total,
+      balanceAmount: paymentMethod === "cash" ? Math.max(0, Number(amountPaid || 0) - total) : 0,
       status: "draft",
     };
   };
@@ -1091,6 +1124,7 @@ function POSContent() {
             .receipt { padding: 8px; }
             .center { text-align: center; }
             .title { font-size: ${isCompact ? "15px" : "18px"}; font-weight: 700; margin-bottom: 4px; }
+            .logo { max-width: ${isCompact ? "34mm" : "44mm"}; max-height: 18mm; object-fit: contain; margin-bottom: 4px; }
             .muted { color: #4b5563; font-size: ${isCompact ? "10px" : "11px"}; }
             .divider { border-top: 1px dashed #9ca3af; margin: 8px 0; }
             .line { display: flex; justify-content: space-between; gap: 8px; }
@@ -1102,6 +1136,7 @@ function POSContent() {
           <div class="receipt">
             ${showReceiptBusinessInfo ? `
               <div class="center">
+                ${receiptSettings.logoImage ? `<img class="logo" src="${receiptSettings.logoImage}" alt="Logo" />` : ""}
                 <div class="title">${receiptSettings.businessName}</div>
                 <div class="muted">${receiptSettings.address}</div>
                 <div class="muted">${receiptSettings.phone}</div>
@@ -1112,6 +1147,10 @@ function POSContent() {
             <div class="line"><span>Bill</span><span>${receipt.transactionId}</span></div>
             <div class="line"><span>Date</span><span>${new Date(receipt.transactionDate).toLocaleString()}</span></div>
             <div class="line"><span>Payment</span><span>${receipt.paymentMethod}</span></div>
+            ${receipt.paymentMethod === "cash" ? `
+              <div class="line"><span>Received</span><span>${money(Math.round(receipt.amountPaid || 0))}</span></div>
+              <div class="line"><span>Balance</span><span>${money(Math.round(receipt.balanceAmount || 0))}</span></div>
+            ` : ""}
             <div class="divider"></div>
             ${rows}
             <div class="divider"></div>
@@ -1119,6 +1158,7 @@ function POSContent() {
             <div class="line"><span>Discount</span><span>${money(Math.round(receipt.discount))}</span></div>
             <div class="line total"><span>Total</span><span>${money(Math.round(receipt.total))}</span></div>
             <div class="divider"></div>
+            ${receiptFooterText ? `<div class="center muted">${receiptFooterText}</div>` : ""}
             <div class="center muted">Thank you</div>
           </div>
           <script>window.onload = () => { window.focus(); window.print(); };</script>
@@ -1447,7 +1487,10 @@ function POSContent() {
               </label>
               <select
                 value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value)}
+                onChange={(e) => {
+                  setPaymentMethod(e.target.value);
+                  setAmountPaid(0);
+                }}
                 className="input-base text-sm"
               >
                 <option value="cash">Cash</option>
@@ -1455,6 +1498,28 @@ function POSContent() {
                 <option value="check">Check</option>
               </select>
             </div>
+
+            {paymentMethod === "cash" && (
+              <div className="mb-4 grid grid-cols-2 gap-3">
+                <label className="block text-sm font-medium text-gray-900">
+                  Money Given
+                  <input
+                    type="number"
+                    min="0"
+                    value={amountPaid || ""}
+                    onChange={(e) => setAmountPaid(Math.max(0, Number(e.target.value) || 0))}
+                    className="input-base text-sm mt-2"
+                    placeholder="0"
+                  />
+                </label>
+                <div className="rounded-lg border border-gray-200 bg-white p-3">
+                  <p className="text-sm text-gray-600">Balance</p>
+                  <p className="text-xl font-bold text-green-600">
+                    {money(Math.max(0, Math.round((amountPaid || 0) - total)))}
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Action Buttons */}
             <div className="flex gap-2">
@@ -1779,6 +1844,13 @@ function POSContent() {
               >
                 {showReceiptBusinessInfo && (
                   <div className="text-center border-b border-dashed border-gray-300 pb-3 mb-3">
+                    {receiptSettings.logoImage && (
+                      <img
+                        src={receiptSettings.logoImage}
+                        alt="Logo"
+                        className="mx-auto mb-2 h-14 max-w-[150px] object-contain"
+                      />
+                    )}
                     <h3 className="font-bold text-lg">{receiptSettings.businessName}</h3>
                     <p className="text-xs text-gray-600">{receiptSettings.address}</p>
                     <p className="text-xs text-gray-600">{receiptSettings.phone}</p>
@@ -1801,6 +1873,18 @@ function POSContent() {
                     <span>Payment</span>
                     <span className="capitalize">{receiptPreview.paymentMethod}</span>
                   </div>
+                  {receiptPreview.paymentMethod === "cash" && (
+                    <>
+                      <div className="flex justify-between gap-3">
+                        <span>Received</span>
+                        <span>{money(Math.round(receiptPreview.amountPaid || 0))}</span>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <span>Balance</span>
+                        <span>{money(Math.round(receiptPreview.balanceAmount || 0))}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="space-y-3 border-b border-dashed border-gray-300 pb-3 mb-3">
@@ -1846,6 +1930,9 @@ function POSContent() {
                 </div>
 
                 <p className="mt-4 text-center text-xs text-gray-600">Thank you</p>
+                {receiptFooterText && (
+                  <p className="mt-2 text-center text-xs text-gray-600">{receiptFooterText}</p>
+                )}
               </div>
             </div>
 

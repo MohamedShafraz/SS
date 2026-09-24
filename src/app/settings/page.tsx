@@ -1,12 +1,18 @@
 "use client";
 
 import { MainLayout } from "@/components/layout";
-import type { BusinessProfile } from "@/types";
-import { useCallback, useEffect, useState } from "react";
+import type { BarcodeStickerPreset, BusinessProfile } from "@/types";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { Save, AlertCircle, Users, UserPlus, RotateCcw, ShieldCheck } from "lucide-react";
 import toast from "react-hot-toast";
 import { SHOP_TEMPLATES } from "@/lib/shop-offerings";
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
+import {
+  BUILT_IN_BARCODE_PRESETS,
+  getActiveBarcodePreset,
+  getBarcodePresets,
+  normalizeBarcodePreset,
+} from "@/lib/barcode-layout";
 
 interface ManagedUser {
   id: string;
@@ -31,6 +37,13 @@ export default function SettingsPage() {
     receiptLayout: "standard",
     receiptPaperWidth: "80mm",
     showReceiptBusinessInfo: true,
+    logoImage: "",
+    showReceiptFooter: true,
+    receiptFooterMode: "return_days",
+    receiptFooterDays: 7,
+    receiptFooterText: "",
+    barcodeStickerPresetId: "builtin-2-column-compact",
+    barcodeStickerCustomPresets: [],
   });
 
   const [barcodeScannerSettings, setBarcodeScannerSettings] = useState({
@@ -67,9 +80,76 @@ export default function SettingsPage() {
 
   const handleSettingChange = (
     key: keyof BusinessProfile,
-    value: string | number | boolean
+    value: string | number | boolean | BarcodeStickerPreset[]
   ) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const activeBarcodePreset = getActiveBarcodePreset(settings);
+  const barcodePresets = getBarcodePresets(settings);
+
+  const updateActiveBarcodePreset = (updates: Partial<BarcodeStickerPreset>) => {
+    const current = normalizeBarcodePreset({ ...activeBarcodePreset, ...updates });
+    if (current.builtIn) {
+      const custom = {
+        ...current,
+        id: `custom-${Date.now()}`,
+        name: `${current.name} Custom`,
+        builtIn: false,
+      };
+      setSettings((prev) => ({
+        ...prev,
+        barcodeStickerPresetId: custom.id,
+        barcodeStickerCustomPresets: [...(prev.barcodeStickerCustomPresets || []), custom],
+      }));
+      return;
+    }
+
+    setSettings((prev) => ({
+      ...prev,
+      barcodeStickerCustomPresets: (prev.barcodeStickerCustomPresets || []).map((preset) =>
+        preset.id === current.id ? current : preset
+      ),
+    }));
+  };
+
+  const createCustomBarcodePreset = () => {
+    const custom = {
+      ...activeBarcodePreset,
+      id: `custom-${Date.now()}`,
+      name: `${activeBarcodePreset.name} Copy`,
+      builtIn: false,
+    };
+    setSettings((prev) => ({
+      ...prev,
+      barcodeStickerPresetId: custom.id,
+      barcodeStickerCustomPresets: [...(prev.barcodeStickerCustomPresets || []), custom],
+    }));
+  };
+
+  const deleteActiveBarcodePreset = () => {
+    if (activeBarcodePreset.builtIn) return;
+    setSettings((prev) => ({
+      ...prev,
+      barcodeStickerPresetId: BUILT_IN_BARCODE_PRESETS[0].id,
+      barcodeStickerCustomPresets: (prev.barcodeStickerCustomPresets || []).filter(
+        (preset) => preset.id !== activeBarcodePreset.id
+      ),
+    }));
+  };
+
+  const handleLogoChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("Logo must be less than 2MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (loadEvent) => {
+      handleSettingChange("logoImage", String(loadEvent.target?.result || ""));
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleBarcodeScannerChange = (key: string, value: boolean) => {
@@ -481,6 +561,208 @@ export default function SettingsPage() {
               }
               className="w-6 h-6 cursor-pointer"
             />
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="rounded-lg border border-gray-200 p-4">
+              <h3 className="font-medium text-gray-900 mb-3">Receipt Logo</h3>
+              <input type="file" accept="image/*" onChange={handleLogoChange} className="input-base" />
+              {settings.logoImage && (
+                <div className="mt-3 flex items-center gap-3">
+                  <img src={settings.logoImage} alt="Receipt logo" className="h-16 w-16 object-contain border rounded bg-white" />
+                  <button
+                    type="button"
+                    onClick={() => handleSettingChange("logoImage", "")}
+                    className="btn-secondary btn-sm"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-medium text-gray-900">Receipt Footer</h3>
+                  <p className="text-sm text-gray-600">Return or bill validity message</p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.showReceiptFooter !== false}
+                  onChange={(e) => handleSettingChange("showReceiptFooter", e.target.checked)}
+                  className="w-6 h-6 cursor-pointer"
+                />
+              </div>
+              <select
+                value={settings.receiptFooterMode || "return_days"}
+                onChange={(e) => handleSettingChange("receiptFooterMode", e.target.value)}
+                className="input-base"
+              >
+                <option value="return_days">Return allowed within X days</option>
+                <option value="valid_days">Bill valid for X days</option>
+                <option value="custom">Custom footer</option>
+              </select>
+              {(settings.receiptFooterMode || "return_days") === "custom" ? (
+                <input
+                  type="text"
+                  value={settings.receiptFooterText || ""}
+                  onChange={(e) => handleSettingChange("receiptFooterText", e.target.value)}
+                  className="input-base"
+                  placeholder="Footer text"
+                />
+              ) : (
+                <input
+                  type="number"
+                  min={1}
+                  value={settings.receiptFooterDays || 7}
+                  onChange={(e) => handleSettingChange("receiptFooterDays", Math.max(1, Number(e.target.value) || 1))}
+                  className="input-base"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Barcode Sticker Layout */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Barcode Sticker Layout</h2>
+              <p className="text-sm text-gray-600">Configure sticker size, grid, printer roll length, and visible label fields.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={createCustomBarcodePreset} className="btn-primary btn-sm">
+                Save Custom
+              </button>
+              <button type="button" onClick={deleteActiveBarcodePreset} disabled={activeBarcodePreset.builtIn} className="btn-secondary btn-sm disabled:opacity-50">
+                Delete Custom
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSettingChange("barcodeStickerPresetId", BUILT_IN_BARCODE_PRESETS[0].id)}
+                className="btn-secondary btn-sm"
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 mb-2">Active Preset</label>
+                  <select
+                    value={settings.barcodeStickerPresetId || BUILT_IN_BARCODE_PRESETS[0].id}
+                    onChange={(e) => handleSettingChange("barcodeStickerPresetId", e.target.value)}
+                    className="input-base"
+                  >
+                    {barcodePresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.name}{preset.builtIn ? " (Built-in)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 mb-2">Preset Name</label>
+                  <input
+                    type="text"
+                    value={activeBarcodePreset.name}
+                    onChange={(e) => updateActiveBarcodePreset({ name: e.target.value })}
+                    className="input-base"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  ["Width mm", "stickerWidthMm"],
+                  ["Height mm", "stickerHeightMm"],
+                  ["Columns", "columns"],
+                  ["Rows", "rows"],
+                  ["Max Roll mm", "maxRollLengthMm"],
+                  ["Column Gap", "columnGapMm"],
+                  ["Row Gap", "rowGapMm"],
+                  ["Barcode H", "barcodeHeightMm"],
+                  ["Bar Width", "barcodeBarWidth"],
+                  ["Left Margin", "marginLeftMm"],
+                  ["Right Margin", "marginRightMm"],
+                  ["Top Margin", "marginTopMm"],
+                  ["Bottom Margin", "marginBottomMm"],
+                  ["Name Font", "productNameFontSize"],
+                  ["Price Font", "sellingPriceFontSize"],
+                  ["Least Font", "leastPriceFontSize"],
+                  ["Code Font", "leastPriceCodeFontSize"],
+                  ["Business Font", "businessInfoFontSize"],
+                ].map(([label, key]) => (
+                  <label key={key} className="block text-sm font-medium text-gray-900">
+                    {label}
+                    <input
+                      type="number"
+                      min={key === "barcodeBarWidth" ? 0.8 : 0}
+                      step={key === "barcodeBarWidth" ? 0.1 : 1}
+                      value={Number(activeBarcodePreset[key as keyof BarcodeStickerPreset])}
+                      onChange={(e) => updateActiveBarcodePreset({ [key]: Number(e.target.value) } as Partial<BarcodeStickerPreset>)}
+                      className="input-base mt-1"
+                    />
+                  </label>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {[
+                  ["Product Name", "showProductName"],
+                  ["Selling Price", "showSellingPrice"],
+                  ["Least Price", "showLeastPrice"],
+                  ["Least Code", "showLeastPriceCode"],
+                  ["Barcode Text", "showBarcodeText"],
+                  ["Business Name", "showBusinessName"],
+                  ["Business Address", "showBusinessAddress"],
+                  ["Business Phone", "showBusinessPhone"],
+                ].map(([label, key]) => (
+                  <label key={key} className="flex items-center gap-2 rounded-lg bg-gray-50 p-3 text-sm font-medium text-gray-900">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(activeBarcodePreset[key as keyof BarcodeStickerPreset])}
+                      onChange={(e) => updateActiveBarcodePreset({ [key]: e.target.checked } as Partial<BarcodeStickerPreset>)}
+                      className="w-5 h-5"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 overflow-auto">
+              <p className="text-sm font-semibold text-gray-900 mb-3">Live Preview</p>
+              <div
+                className="grid bg-white border border-dashed border-gray-300"
+                style={{
+                  gridTemplateColumns: `repeat(${activeBarcodePreset.columns}, ${Math.min(140, activeBarcodePreset.stickerWidthMm * 2.1)}px)`,
+                  gap: `${Math.max(4, activeBarcodePreset.rowGapMm * 2)}px ${Math.max(4, activeBarcodePreset.columnGapMm * 2)}px`,
+                  padding: `${Math.max(6, activeBarcodePreset.marginTopMm * 2)}px`,
+                }}
+              >
+                {Array.from({ length: Math.min(12, activeBarcodePreset.columns * activeBarcodePreset.rows) }).map((_, index) => (
+                  <div
+                    key={index}
+                    className="border border-gray-300 bg-white text-center overflow-hidden flex flex-col justify-center"
+                    style={{
+                      width: `${Math.min(140, activeBarcodePreset.stickerWidthMm * 2.1)}px`,
+                      height: `${Math.min(110, activeBarcodePreset.stickerHeightMm * 2.1)}px`,
+                    }}
+                  >
+                    {activeBarcodePreset.showBusinessName && <div style={{ fontSize: activeBarcodePreset.businessInfoFontSize }}>Business</div>}
+                    {activeBarcodePreset.showProductName && <div className="font-semibold truncate" style={{ fontSize: activeBarcodePreset.productNameFontSize }}>Product Name</div>}
+                    <div className="mx-auto my-1 h-6 w-24 bg-gray-900" />
+                    {activeBarcodePreset.showSellingPrice && <div className="font-bold" style={{ fontSize: activeBarcodePreset.sellingPriceFontSize }}>Price 1250</div>}
+                    {activeBarcodePreset.showLeastPriceCode && <div className="font-bold" style={{ fontSize: activeBarcodePreset.leastPriceCodeFontSize }}>LP-001</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 

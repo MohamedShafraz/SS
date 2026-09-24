@@ -1,0 +1,129 @@
+import type { BarcodeStickerPreset, BusinessProfile } from "@/types";
+
+export const BUILT_IN_BARCODE_PRESETS: BarcodeStickerPreset[] = [
+  {
+    id: "builtin-2-column-compact",
+    name: "2-column compact",
+    builtIn: true,
+    stickerWidthMm: 50,
+    stickerHeightMm: 25,
+    columns: 2,
+    rows: 10,
+    maxRollLengthMm: 250,
+    columnGapMm: 2,
+    rowGapMm: 2,
+    marginLeftMm: 2,
+    marginRightMm: 2,
+    marginTopMm: 2,
+    marginBottomMm: 2,
+    barcodeHeightMm: 10,
+    barcodeBarWidth: 1.3,
+    productNameFontSize: 8,
+    sellingPriceFontSize: 12,
+    leastPriceFontSize: 9,
+    leastPriceCodeFontSize: 11,
+    businessInfoFontSize: 7,
+    showProductName: true,
+    showSellingPrice: true,
+    showLeastPrice: true,
+    showLeastPriceCode: true,
+    showBarcodeText: true,
+    showBusinessName: false,
+    showBusinessAddress: false,
+    showBusinessPhone: false,
+  },
+  {
+    id: "builtin-single-50x25",
+    name: "Single 50x25mm",
+    builtIn: true,
+    stickerWidthMm: 50,
+    stickerHeightMm: 25,
+    columns: 1,
+    rows: 1,
+    maxRollLengthMm: 250,
+    columnGapMm: 0,
+    rowGapMm: 2,
+    marginLeftMm: 2,
+    marginRightMm: 2,
+    marginTopMm: 2,
+    marginBottomMm: 2,
+    barcodeHeightMm: 10,
+    barcodeBarWidth: 1.3,
+    productNameFontSize: 8,
+    sellingPriceFontSize: 12,
+    leastPriceFontSize: 9,
+    leastPriceCodeFontSize: 11,
+    businessInfoFontSize: 7,
+    showProductName: true,
+    showSellingPrice: true,
+    showLeastPrice: true,
+    showLeastPriceCode: true,
+    showBarcodeText: true,
+    showBusinessName: false,
+    showBusinessAddress: false,
+    showBusinessPhone: false,
+  },
+  {
+    id: "builtin-single-60x40",
+    name: "Single 60x40mm",
+    builtIn: true,
+    stickerWidthMm: 60,
+    stickerHeightMm: 40,
+    columns: 1,
+    rows: 1,
+    maxRollLengthMm: 250,
+    columnGapMm: 0,
+    rowGapMm: 2,
+    marginLeftMm: 3,
+    marginRightMm: 3,
+    marginTopMm: 3,
+    marginBottomMm: 3,
+    barcodeHeightMm: 16,
+    barcodeBarWidth: 1.6,
+    productNameFontSize: 10,
+    sellingPriceFontSize: 15,
+    leastPriceFontSize: 11,
+    leastPriceCodeFontSize: 13,
+    businessInfoFontSize: 8,
+    showProductName: true,
+    showSellingPrice: true,
+    showLeastPrice: true,
+    showLeastPriceCode: true,
+    showBarcodeText: true,
+    showBusinessName: false,
+    showBusinessAddress: false,
+    showBusinessPhone: false,
+  },
+];
+
+export function getBarcodePresets(settings: Partial<BusinessProfile> | null | undefined) {
+  return [
+    ...BUILT_IN_BARCODE_PRESETS,
+    ...((settings?.barcodeStickerCustomPresets || []).map((preset) => ({ ...preset, builtIn: false }))),
+  ];
+}
+
+export function getActiveBarcodePreset(settings: Partial<BusinessProfile> | null | undefined) {
+  const presets = getBarcodePresets(settings);
+  return (
+    presets.find((preset) => preset.id === settings?.barcodeStickerPresetId) ||
+    BUILT_IN_BARCODE_PRESETS[0]
+  );
+}
+
+export function normalizeBarcodePreset(value: BarcodeStickerPreset): BarcodeStickerPreset {
+  return {
+    ...BUILT_IN_BARCODE_PRESETS[0],
+    ...value,
+    stickerWidthMm: Math.max(10, Number(value.stickerWidthMm || 50)),
+    stickerHeightMm: Math.max(10, Number(value.stickerHeightMm || 25)),
+    columns: Math.max(1, Math.floor(Number(value.columns || 1))),
+    rows: Math.max(1, Math.floor(Number(value.rows || 1))),
+    maxRollLengthMm: Math.max(10, Number(value.maxRollLengthMm || 250)),
+    columnGapMm: Math.max(0, Number(value.columnGapMm || 0)),
+    rowGapMm: Math.max(0, Number(value.rowGapMm || 0)),
+    barcodeHeightMm: Math.max(5, Number(value.barcodeHeightMm || 10)),
+    barcodeBarWidth: Math.max(0.8, Number(value.barcodeBarWidth || 1.3)),
+  };
+}
+

@@ -168,6 +168,8 @@ export const addProductVariant = async (
   barcode: string,
   quantity: number,
   price_adjustment: number = 0,
+  least_price: number = 0,
+  least_price_code?: string,
   imageUrl?: string
 ): Promise<ProductVariant | null> => {
   try {
@@ -182,6 +184,8 @@ export const addProductVariant = async (
           barcode,
           quantity,
           price_adjustment,
+          least_price,
+          least_price_code: least_price_code ?? "",
           image_url: imageUrl ?? null,
         },
       ])

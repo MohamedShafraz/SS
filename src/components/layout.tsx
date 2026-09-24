@@ -9,6 +9,9 @@ import {
   Menu,
   X,
   LogOut,
+  Truck,
+  ReceiptText,
+  Building2,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
@@ -27,6 +30,9 @@ export function Sidebar() {
           { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
           { href: "/pos", label: "POS System", icon: ShoppingCart },
           { href: "/products", label: "Products", icon: Package },
+          { href: "/companies", label: "Companies", icon: Building2 },
+          { href: "/suppliers", label: "Suppliers", icon: Truck },
+          { href: "/accounting", label: "Accounting", icon: ReceiptText },
           { href: "/transactions", label: "Transactions", icon: ShoppingCart },
           ...(user?.role === "admin"
             ? [{ href: "/settings", label: "Settings", icon: Settings }]

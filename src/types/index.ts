@@ -41,6 +41,45 @@ export interface BusinessProfile {
   receiptLayout?: "compact" | "standard" | "detailed";
   receiptPaperWidth?: "58mm" | "80mm";
   showReceiptBusinessInfo?: boolean;
+  logoImage?: string;
+  showReceiptFooter?: boolean;
+  receiptFooterMode?: "return_days" | "valid_days" | "custom";
+  receiptFooterDays?: number;
+  receiptFooterText?: string;
+  barcodeStickerPresetId?: string;
+  barcodeStickerCustomPresets?: BarcodeStickerPreset[];
+}
+
+export interface BarcodeStickerPreset {
+  id: string;
+  name: string;
+  builtIn?: boolean;
+  stickerWidthMm: number;
+  stickerHeightMm: number;
+  columns: number;
+  rows: number;
+  maxRollLengthMm: number;
+  columnGapMm: number;
+  rowGapMm: number;
+  marginLeftMm: number;
+  marginRightMm: number;
+  marginTopMm: number;
+  marginBottomMm: number;
+  barcodeHeightMm: number;
+  barcodeBarWidth: number;
+  productNameFontSize: number;
+  sellingPriceFontSize: number;
+  leastPriceFontSize: number;
+  leastPriceCodeFontSize: number;
+  businessInfoFontSize: number;
+  showProductName: boolean;
+  showSellingPrice: boolean;
+  showLeastPrice: boolean;
+  showLeastPriceCode: boolean;
+  showBarcodeText: boolean;
+  showBusinessName: boolean;
+  showBusinessAddress: boolean;
+  showBusinessPhone: boolean;
 }
 
 export interface Product {
@@ -49,6 +88,8 @@ export interface Product {
   category: string;
   price: number;
   cost: number;
+  least_price?: number;
+  least_price_code?: string;
   quantity: number;
   image_url: string;
   barcode: string;
@@ -64,6 +105,8 @@ export interface Transaction {
   total_amount: number;
   discount_amount: number;
   tax_amount: number;
+  amount_paid?: number | null;
+  balance_amount?: number | null;
   payment_method: string;
   status?: TransactionStatus;
   stripe_session_id?: string | null;
@@ -123,6 +166,8 @@ export interface ProductVariant {
   barcode: string;
   quantity: number;
   price_adjustment: number;          // Extra cost for this variant
+  least_price?: number | null;       // Informational shop reference
+  least_price_code?: string | null;  // Informational shop reference code
   image_url?: string | null;         // NEW: variant-specific image
   created_at: string;
   updated_at: string;
@@ -181,6 +226,9 @@ export interface ProductRow {
   category: string;
   price: number;
   cost: number;
+  least_price: number | null;
+  least_price_code: string | null;
+  company_id: string | null;
   quantity: number;
   image_url: string;
   barcode: string;
@@ -190,7 +238,7 @@ export interface ProductRow {
 }
 
 export type ProductInsert = Pick<ProductRow, "name" | "category" | "price" | "cost"> &
-  Partial<Pick<ProductRow, "id" | "quantity" | "created_at" | "updated_at">> & {
+  Partial<Pick<ProductRow, "id" | "quantity" | "least_price" | "least_price_code" | "created_at" | "updated_at">> & {
   image_url?: string | null;
   barcode?: string;
   sku?: string;
@@ -220,6 +268,8 @@ export interface ProductVariantRow {
   barcode: string;
   quantity: number;
   price_adjustment: number;
+  least_price: number | null;
+  least_price_code: string | null;
   image_url: string | null;
   created_at: string;
   updated_at: string;
@@ -237,6 +287,8 @@ export interface TransactionRow {
   total_amount: number;
   discount_amount: number;
   tax_amount: number;
+  amount_paid: number | null;
+  balance_amount: number | null;
   payment_method: string;
   status: TransactionStatus | null;
   stripe_session_id: string | null;
@@ -244,6 +296,48 @@ export interface TransactionRow {
   created_at: string | null;
   is_replacement_transaction: boolean | null;
   original_return_id: string | null;
+}
+
+export interface SupplierRow {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  products: string | null;
+  total_amount: number;
+  paid_amount: number;
+  due_amount: number;
+  payment_status: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface SupplierPaymentRow {
+  id: string;
+  supplier_id: string;
+  payment_date: string;
+  amount: number;
+  notes: string | null;
+  created_at: string | null;
+}
+
+export interface ExpenseRow {
+  id: string;
+  expense_date: string;
+  category: "staff_salary" | "daily" | "other" | string;
+  description: string | null;
+  amount: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface CompanyRow {
+  id: string;
+  name: string;
+  notes: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export type TransactionInsert = Pick<
@@ -416,6 +510,45 @@ export interface Database {
           updated_at?: string;
         } & Record<string, unknown>;
         Update: Partial<Omit<UserRow, "id">> & Record<string, unknown>;
+        Relationships: [];
+      };
+      suppliers: {
+        Row: SupplierRow & Record<string, unknown>;
+        Insert: Omit<SupplierRow, "id" | "created_at" | "updated_at"> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        } & Record<string, unknown>;
+        Update: Partial<Omit<SupplierRow, "id">> & Record<string, unknown>;
+        Relationships: [];
+      };
+      supplier_payments: {
+        Row: SupplierPaymentRow & Record<string, unknown>;
+        Insert: Omit<SupplierPaymentRow, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        } & Record<string, unknown>;
+        Update: Partial<Omit<SupplierPaymentRow, "id">> & Record<string, unknown>;
+        Relationships: [];
+      };
+      expenses: {
+        Row: ExpenseRow & Record<string, unknown>;
+        Insert: Omit<ExpenseRow, "id" | "created_at" | "updated_at"> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        } & Record<string, unknown>;
+        Update: Partial<Omit<ExpenseRow, "id">> & Record<string, unknown>;
+        Relationships: [];
+      };
+      companies: {
+        Row: CompanyRow & Record<string, unknown>;
+        Insert: Omit<CompanyRow, "id" | "created_at" | "updated_at"> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        } & Record<string, unknown>;
+        Update: Partial<Omit<CompanyRow, "id">> & Record<string, unknown>;
         Relationships: [];
       };
       plan_purchases: {

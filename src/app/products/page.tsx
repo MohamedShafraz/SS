@@ -10,6 +10,7 @@ import { VariantManager } from "@/components/VariantManager";
 import { BusinessProfile, IndustryMode, ProductVariant } from "@/types";
 import { getCategoryPresets, getStoredIndustryMode } from "@/lib/industry-presets";
 import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
+import { getActiveBarcodePreset } from "@/lib/barcode-layout";
 
 type HardwarePrinter = { name: string; displayName?: string; isDefault?: boolean };
 type HardwareBridge = {
@@ -23,11 +24,29 @@ interface Product {
   category: string;
   price: number;
   cost: number;
+  least_price?: number;
+  least_price_code?: string;
+  company_id?: string | null;
   quantity: number;
   image_url: string;
   barcode: string;
   sku: string;
 }
+
+interface Company {
+  id: string;
+  name: string;
+}
+
+type BarcodeTarget = {
+  kind: "product" | "variant";
+  name: string;
+  barcode: string;
+  sku: string;
+  price: number;
+  least_price?: number | null;
+  least_price_code?: string | null;
+};
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -37,18 +56,33 @@ export default function ProductsPage() {
   const [formData, setFormData] = useState<Partial<Product>>({});
   const [searchTerm, setSearchTerm] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [companyFilter, setCompanyFilter] = useState("all");
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [industryMode, setIndustryMode] = useState<IndustryMode>("general");
-  const [settings, setSettings] = useState<Pick<BusinessProfile, "currency" | "barcodePrefix">>({
+  const [settings, setSettings] = useState<BusinessProfile>({
+    businessName: "Unified Business",
+    address: "123 Main Street, City",
+    phone: "+94 77 712 3456",
+    email: "info@business.com",
+    taxRate: 5,
     currency: DEFAULT_CURRENCY,
+    businessType: "Retail",
     barcodePrefix: "BCD",
+    industryMode: "general",
+    receiptLayout: "standard",
+    receiptPaperWidth: "80mm",
+    showReceiptBusinessInfo: true,
   });
-  const [barcodeProduct, setBarcodeProduct] = useState<Product | null>(null);
+  const [barcodeTarget, setBarcodeTarget] = useState<BarcodeTarget | null>(null);
   const [printers, setPrinters] = useState<HardwarePrinter[]>([]);
+  const [selectedPrinterName, setSelectedPrinterName] = useState("");
+  const [barcodeCopies, setBarcodeCopies] = useState(1);
   const [printingBarcode, setPrintingBarcode] = useState(false);
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [variantsLoading, setVariantsLoading] = useState(false);
   const barcodePreviewRef = useRef<SVGSVGElement>(null);
   const barcodeStickerRef = useRef<SVGSVGElement>(null);
+  const activeBarcodePreset = getActiveBarcodePreset(settings);
 
   const categories = getCategoryPresets(industryMode);
 
@@ -109,21 +143,21 @@ export default function ProductsPage() {
   }, [formData.barcode, showForm]);
 
   useEffect(() => {
-    if (!barcodeProduct || !barcodeStickerRef.current) return;
+    if (!barcodeTarget || !barcodeStickerRef.current) return;
 
     try {
-      JsBarcode(barcodeStickerRef.current, barcodeProduct.barcode, {
+      JsBarcode(barcodeStickerRef.current, barcodeTarget.barcode, {
         format: "CODE128",
-        width: 2,
-        height: 80,
-        displayValue: true,
+        width: activeBarcodePreset.barcodeBarWidth,
+        height: activeBarcodePreset.barcodeHeightMm * 3.78,
+        displayValue: activeBarcodePreset.showBarcodeText,
         margin: 8,
         fontSize: 14,
       });
     } catch {
       barcodeStickerRef.current.innerHTML = "";
     }
-  }, [barcodeProduct]);
+  }, [barcodeTarget, activeBarcodePreset]);
 
   const fetchProducts = useCallback(async (isActive: () => boolean = () => true) => {
     try {
@@ -149,6 +183,9 @@ export default function ProductsPage() {
             category: product.category,
             price: product.price,
             cost: product.cost,
+            least_price: product.least_price ?? 0,
+            least_price_code: product.least_price_code ?? "",
+            company_id: product.company_id ?? null,
             quantity: product.quantity ?? 0,
             image_url: product.image_url ?? "",
             barcode: product.barcode ?? "",
@@ -177,6 +214,25 @@ export default function ProductsPage() {
     };
   }, [fetchProducts]);
 
+  useEffect(() => {
+    let active = true;
+
+    supabase
+      .from("companies")
+      .select("*")
+      .order("name", { ascending: true })
+      .then(({ data }) => {
+        if (active) setCompanies((data || []) as Company[]);
+      })
+      .catch(() => {
+        if (active) setCompanies([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const filteredProducts = products.filter((product) => {
     const searchLower = searchTerm.toLowerCase();
     const matchesSearch = 
@@ -186,7 +242,9 @@ export default function ProductsPage() {
       product.category.toLowerCase().includes(searchLower);
     const matchesCategory =
       categoryFilter === "all" || product.category === categoryFilter;
-    return matchesSearch && matchesCategory;
+    const matchesCompany =
+      companyFilter === "all" || (product.company_id || "") === companyFilter;
+    return matchesSearch && matchesCategory && matchesCompany;
   });
 
   const handleAddProduct = () => {
@@ -235,6 +293,9 @@ export default function ProductsPage() {
             category: formData.category,
             price: formData.price,
             cost: formData.cost,
+            least_price: Math.max(0, Number(formData.least_price || 0)),
+            least_price_code: formData.least_price_code || "",
+            company_id: formData.company_id || null,
             quantity: totalQuantity,
             image_url: formData.image_url ?? null,
             barcode: formData.barcode,
@@ -257,6 +318,9 @@ export default function ProductsPage() {
             category: formData.category,
             price: formData.price,
             cost: formData.cost,
+            least_price: Math.max(0, Number(formData.least_price || 0)),
+            least_price_code: formData.least_price_code || "",
+            company_id: formData.company_id || null,
             quantity: Math.max(0, formData.quantity || 0),
             image_url: formData.image_url ?? null,
             barcode: formData.barcode || createBarcodeValue(),
@@ -300,37 +364,123 @@ export default function ProductsPage() {
   };
 
   const generateBarcodeSticker = (product: Product) => {
-    setBarcodeProduct(product);
+    setBarcodeTarget({
+      kind: "product",
+      name: product.name,
+      barcode: product.barcode,
+      sku: product.sku,
+      price: product.price,
+      least_price: product.least_price ?? 0,
+      least_price_code: product.least_price_code ?? "",
+    });
+    setBarcodeCopies(1);
+  };
+
+  const generateVariantBarcodeSticker = (variant: ProductVariant) => {
+    const productName = formData.name || "Variant";
+    const productPrice = Number(formData.price || 0);
+    setBarcodeTarget({
+      kind: "variant",
+      name: `${productName} - ${variant.variant_type}: ${variant.variant_value}`,
+      barcode: variant.barcode,
+      sku: variant.sku,
+      price: productPrice + Number(variant.price_adjustment || 0),
+      least_price: variant.least_price || formData.least_price || 0,
+      least_price_code: variant.least_price_code || formData.least_price_code || "",
+    });
+    setBarcodeCopies(1);
   };
 
   useEffect(() => {
-    if (!barcodeProduct) {
+    if (!barcodeTarget) {
       setPrinters([]);
       return;
     }
 
     const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
-    bridge?.listPrinters().then(setPrinters).catch((error) => {
+    bridge?.listPrinters().then((items) => {
+      setPrinters(items);
+      const defaultPrinter = items.find((item) => item.isDefault) || items[0];
+      setSelectedPrinterName((current) => current || defaultPrinter?.name || "");
+    }).catch((error) => {
       console.error("Unable to detect printers:", error);
       setPrinters([]);
     });
-  }, [barcodeProduct]);
+  }, [barcodeTarget]);
+
+  const makeBarcodeSvg = (value: string) => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    JsBarcode(svg, value, {
+      format: "CODE128",
+      width: activeBarcodePreset.barcodeBarWidth,
+      height: activeBarcodePreset.barcodeHeightMm * 3.78,
+      displayValue: activeBarcodePreset.showBarcodeText,
+      margin: 0,
+      fontSize: 9,
+    });
+    return svg.outerHTML;
+  };
+
+  const buildBarcodePrintHtml = (target: BarcodeTarget) => {
+    const preset = activeBarcodePreset;
+    const totalCopies = Math.max(1, Number(barcodeCopies || 1));
+    const cellsPerPage = Math.max(1, preset.columns * preset.rows);
+    const barcodeSvg = makeBarcodeSvg(target.barcode);
+    const leastPrice = Number(target.least_price || 0);
+    const label = `
+      <div class="label">
+        ${preset.showBusinessName ? `<div class="business strong">${settings.businessName || ""}</div>` : ""}
+        ${preset.showBusinessAddress ? `<div class="business">${settings.address || ""}</div>` : ""}
+        ${preset.showBusinessPhone ? `<div class="business">${settings.phone || ""}</div>` : ""}
+        ${preset.showProductName ? `<div class="product">${target.name}</div>` : ""}
+        <div class="barcode">${barcodeSvg}</div>
+        ${preset.showSellingPrice ? `<div class="price">Price: ${formatCurrency(target.price, settings.currency)}</div>` : ""}
+        ${preset.showLeastPrice ? `<div class="least">Least: ${leastPrice ? formatCurrency(leastPrice, settings.currency) : "-"}</div>` : ""}
+        ${preset.showLeastPriceCode ? `<div class="code">${target.least_price_code || target.sku || ""}</div>` : ""}
+      </div>
+    `;
+    const pages: string[] = [];
+    for (let index = 0; index < totalCopies; index += cellsPerPage) {
+      const count = Math.min(cellsPerPage, totalCopies - index);
+      pages.push(`<div class="sheet">${Array.from({ length: count }, () => label).join("")}</div>`);
+    }
+
+    return `<!doctype html><html><head><meta charset="utf-8" /><style>
+      @page { size: ${preset.stickerWidthMm * preset.columns + preset.columnGapMm * Math.max(0, preset.columns - 1) + preset.marginLeftMm + preset.marginRightMm}mm ${Math.min(preset.maxRollLengthMm, preset.stickerHeightMm * preset.rows + preset.rowGapMm * Math.max(0, preset.rows - 1) + preset.marginTopMm + preset.marginBottomMm)}mm; margin: 0; }
+      body { margin: 0; font-family: Arial, sans-serif; color: #111; }
+      .sheet { box-sizing: border-box; width: ${preset.stickerWidthMm * preset.columns + preset.columnGapMm * Math.max(0, preset.columns - 1) + preset.marginLeftMm + preset.marginRightMm}mm; min-height: ${Math.min(preset.maxRollLengthMm, preset.stickerHeightMm * preset.rows + preset.rowGapMm * Math.max(0, preset.rows - 1) + preset.marginTopMm + preset.marginBottomMm)}mm; padding: ${preset.marginTopMm}mm ${preset.marginRightMm}mm ${preset.marginBottomMm}mm ${preset.marginLeftMm}mm; display: grid; grid-template-columns: repeat(${preset.columns}, ${preset.stickerWidthMm}mm); grid-auto-rows: ${preset.stickerHeightMm}mm; gap: ${preset.rowGapMm}mm ${preset.columnGapMm}mm; page-break-after: always; }
+      .label { box-sizing: border-box; width: ${preset.stickerWidthMm}mm; height: ${preset.stickerHeightMm}mm; overflow: hidden; text-align: center; padding: 1mm; display: flex; flex-direction: column; justify-content: center; line-height: 1.05; }
+      .business { font-size: ${preset.businessInfoFontSize}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .strong { font-weight: 700; }
+      .product { font-size: ${preset.productNameFontSize}px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .barcode svg { max-width: 100%; height: ${preset.barcodeHeightMm}mm; }
+      .price { font-size: ${preset.sellingPriceFontSize}px; font-weight: 700; }
+      .least { font-size: ${preset.leastPriceFontSize}px; }
+      .code { font-size: ${preset.leastPriceCodeFontSize}px; font-weight: 700; letter-spacing: 0; }
+    </style></head><body>${pages.join("")}</body></html>`;
+  };
 
   const printBarcode = async () => {
-    if (!barcodeProduct || !barcodeStickerRef.current) return;
+    if (!barcodeTarget || !barcodeStickerRef.current) return;
 
     setPrintingBarcode(true);
     try {
       const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
-      const printer = printers.find((item) => item.isDefault) || printers[0];
-      const labelHtml = `<!doctype html><html><head><style>body{font-family:Arial,sans-serif;text-align:center;margin:12mm}svg{max-width:100%}</style></head><body><h3>${barcodeProduct.name}</h3>${barcodeStickerRef.current.outerHTML}<p>${barcodeProduct.sku || ""}</p></body></html>`;
+      const printer = printers.find((item) => item.name === selectedPrinterName) || printers.find((item) => item.isDefault) || printers[0];
+      const labelHtml = buildBarcodePrintHtml(barcodeTarget);
 
       if (bridge && printer) {
         const result = await bridge.printBarcode(labelHtml, printer.name);
         if (!result.success) throw new Error(result.error || "Unable to print barcode");
         toast.success(`Barcode sent to ${result.printerName || printer.displayName || printer.name}`);
       } else if (typeof window.print === "function") {
-        window.print();
+        const printWindow = window.open("", "MSHPOSBarcodePrint", "width=640,height=480");
+        if (!printWindow) throw new Error("Print popup was blocked");
+        printWindow.document.open();
+        printWindow.document.write(labelHtml);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
       } else {
         toast.error("No printer detected");
       }
@@ -362,7 +512,7 @@ export default function ProductsPage() {
 
         {/* Filters */}
         <div className="bg-white rounded-lg shadow-md p-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <input
               type="text"
               placeholder="Search products..."
@@ -379,6 +529,18 @@ export default function ProductsPage() {
               {categories.map((cat) => (
                 <option key={cat} value={cat}>
                   {cat}
+                </option>
+              ))}
+            </select>
+            <select
+              value={companyFilter}
+              onChange={(e) => setCompanyFilter(e.target.value)}
+              className="input-base"
+            >
+              <option value="all">All Companies/Brands</option>
+              {companies.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.name}
                 </option>
               ))}
             </select>
@@ -404,6 +566,9 @@ export default function ProductsPage() {
                     Cost
                   </th>
                   <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
+                    Least
+                  </th>
+                  <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
                     Quantity
                   </th>
                   <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">
@@ -417,13 +582,13 @@ export default function ProductsPage() {
               <tbody className="divide-y">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-8 text-center text-gray-600">
+                    <td colSpan={8} className="px-6 py-8 text-center text-gray-600">
                       Loading products...
                     </td>
                   </tr>
                 ) : filteredProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-8 text-center">
+                    <td colSpan={8} className="px-6 py-8 text-center">
                       <p className="text-gray-600 mb-2">No products found</p>
                       <p className="text-sm text-gray-500">Click &quot;Add Product&quot; to create your first product</p>
                     </td>
@@ -466,6 +631,12 @@ export default function ProductsPage() {
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-600">
                           {formatCurrency(product.cost, settings.currency)}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-600">
+                          <div>{formatCurrency(product.least_price || 0, settings.currency)}</div>
+                          {product.least_price_code && (
+                            <div className="text-xs font-semibold text-gray-500">{product.least_price_code}</div>
+                          )}
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-600">
                           <span
@@ -579,6 +750,26 @@ export default function ProductsPage() {
                     </p>
                   </div>
 
+                  <div>
+                    <label className="block text-sm font-medium text-gray-900 mb-2">
+                      Company / Brand
+                    </label>
+                    <select
+                      value={formData.company_id || ""}
+                      onChange={(e) =>
+                        setFormData({ ...formData, company_id: e.target.value || null })
+                      }
+                      className="input-base"
+                    >
+                      <option value="">Uncategorized</option>
+                      {companies.map((company) => (
+                        <option key={company.id} value={company.id}>
+                          {company.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-sm font-medium text-gray-900 mb-2">
@@ -609,6 +800,42 @@ export default function ProductsPage() {
                         }
                         className="input-base"
                         placeholder="Cost"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-900 mb-2">
+                        Least Price
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={formData.least_price || ""}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            least_price: Math.max(0, Number(e.target.value) || 0),
+                          })
+                        }
+                        className="input-base"
+                        placeholder="Least price"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-900 mb-2">
+                        Least Price Code
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.least_price_code || ""}
+                        onChange={(e) =>
+                          setFormData({ ...formData, least_price_code: e.target.value })
+                        }
+                        className="input-base"
+                        placeholder="Code on sticker"
                       />
                     </div>
                   </div>
@@ -752,6 +979,7 @@ export default function ProductsPage() {
                       <VariantManager
                         productId={editingId}
                         variants={variants}
+                        onPrintBarcode={generateVariantBarcodeSticker}
                         onVariantsUpdated={async () => {
                           if (editingId) {
                             const updated = await getProductVariants(editingId);
@@ -774,16 +1002,16 @@ export default function ProductsPage() {
           </div>
         )}
 
-        {barcodeProduct && (
+        {barcodeTarget && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg max-w-md w-full p-6">
               <div className="flex justify-between items-start gap-4 mb-5">
                 <div>
                   <h2 className="text-xl font-bold text-gray-900">Barcode Preview</h2>
-                  <p className="text-sm text-gray-600">{barcodeProduct.name}</p>
+                  <p className="text-sm text-gray-600">{barcodeTarget.name}</p>
                 </div>
                 <button
-                  onClick={() => setBarcodeProduct(null)}
+                  onClick={() => setBarcodeTarget(null)}
                   className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
                 >
                   X
@@ -797,18 +1025,60 @@ export default function ProductsPage() {
               <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <p className="text-gray-500">SKU</p>
-                  <p className="font-semibold text-gray-900 break-all">{barcodeProduct.sku || "-"}</p>
+                  <p className="font-semibold text-gray-900 break-all">{barcodeTarget.sku || "-"}</p>
                 </div>
                 <div>
                   <p className="text-gray-500">Barcode</p>
-                  <p className="font-semibold text-gray-900 break-all">{barcodeProduct.barcode}</p>
+                  <p className="font-semibold text-gray-900 break-all">{barcodeTarget.barcode}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Least Price</p>
+                  <p className="font-semibold text-gray-900 break-all">
+                    {formatCurrency(barcodeTarget.least_price || 0, settings.currency)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Least Code</p>
+                  <p className="font-semibold text-gray-900 break-all">{barcodeTarget.least_price_code || "-"}</p>
                 </div>
               </div>
 
+              <div className="mt-4 grid grid-cols-1 gap-3">
+                <label className="text-sm font-medium text-gray-900">
+                  Printer
+                  <select
+                    value={selectedPrinterName}
+                    onChange={(e) => setSelectedPrinterName(e.target.value)}
+                    className="input-base mt-1"
+                  >
+                    {printers.length === 0 ? (
+                      <option value="">Browser print fallback</option>
+                    ) : (
+                      printers.map((printer) => (
+                        <option key={printer.name} value={printer.name}>
+                          {printer.displayName || printer.name}{printer.isDefault ? " (Default)" : ""}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </label>
+                <label className="text-sm font-medium text-gray-900">
+                  Copies
+                  <input
+                    type="number"
+                    min={1}
+                    value={barcodeCopies}
+                    onChange={(e) => setBarcodeCopies(Math.max(1, Number(e.target.value) || 1))}
+                    className="input-base mt-1"
+                  />
+                </label>
+              </div>
+
               <p className="mt-4 text-xs text-gray-500">
-                {printers.length > 0
-                  ? `Printer detected: ${(printers.find((printer) => printer.isDefault) || printers[0]).displayName || (printers.find((printer) => printer.isDefault) || printers[0]).name}`
-                  : "No desktop printer detected. Browser printing will be used."}
+                Active layout: {activeBarcodePreset.name}. Selected printer:{" "}
+                {printers.find((printer) => printer.name === selectedPrinterName)?.displayName ||
+                  printers.find((printer) => printer.name === selectedPrinterName)?.name ||
+                  "Browser fallback"}
               </p>
 
               <button
@@ -820,7 +1090,7 @@ export default function ProductsPage() {
               </button>
 
               <button
-                onClick={() => setBarcodeProduct(null)}
+                onClick={() => setBarcodeTarget(null)}
                 className="btn-secondary mt-6 w-full"
               >
                 Close

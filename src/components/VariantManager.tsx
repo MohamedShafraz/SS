@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus} from "lucide-react";
+import { Barcode, Plus} from "lucide-react";
 import toast from "react-hot-toast";
 import { ProductVariant } from "@/types";
 import { addProductVariant, updateVariantStock } from "@/lib/supabase";
@@ -10,18 +10,22 @@ interface VariantManagerProps {
   productId: string;
   variants: ProductVariant[];
   onVariantsUpdated: () => void;
+  onPrintBarcode?: (variant: ProductVariant) => void;
 }
 
 export const VariantManager = ({
   productId,
   variants,
   onVariantsUpdated,
+  onPrintBarcode,
 }: VariantManagerProps) => {
   const [showForm, setShowForm] = useState(false);
   const [variantType, setVariantType] = useState("size");
   const [variantValue, setVariantValue] = useState("");
   const [quantity, setQuantity] = useState(0);
   const [priceAdjustment, setPriceAdjustment] = useState(0);
+  const [leastPrice, setLeastPrice] = useState(0);
+  const [leastPriceCode, setLeastPriceCode] = useState("");
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -68,6 +72,8 @@ export const VariantManager = ({
         barcode,
         quantity,
         priceAdjustment,
+        leastPrice,
+        leastPriceCode || undefined,
         imageBase64 || undefined
       );
 
@@ -76,6 +82,8 @@ export const VariantManager = ({
         setVariantValue("");
         setQuantity(0);
         setPriceAdjustment(0);
+        setLeastPrice(0);
+        setLeastPriceCode("");
         setImagePreview(null);
         setImageBase64(null);
         setShowForm(false);
@@ -152,6 +160,21 @@ export const VariantManager = ({
                   <span className="text-xs bg-yellow-200 px-2 py-0.5 rounded">
                     {variant.price_adjustment > 0 ? "+" : ""}{variant.price_adjustment}
                   </span>
+                )}
+                {variant.least_price_code && (
+                  <span className="text-xs bg-white px-2 py-0.5 rounded border border-blue-300">
+                    {variant.least_price_code}
+                  </span>
+                )}
+                {onPrintBarcode && (
+                  <button
+                    type="button"
+                    onClick={() => onPrintBarcode(variant)}
+                    className="p-1 text-blue-700 hover:bg-blue-200 rounded"
+                    title="Barcode preview"
+                  >
+                    <Barcode className="w-3.5 h-3.5" />
+                  </button>
                 )}
               </div>
             ))}
@@ -233,6 +256,34 @@ export const VariantManager = ({
               </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Least Price
+                </label>
+                <input
+                  type="number"
+                  value={leastPrice}
+                  onChange={(e) => setLeastPrice(Math.max(0, Number(e.target.value) || 0))}
+                  min="0"
+                  step="0.01"
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Least Price Code
+                </label>
+                <input
+                  type="text"
+                  value={leastPriceCode}
+                  onChange={(e) => setLeastPriceCode(e.target.value)}
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                  placeholder="Code"
+                />
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">
                 Variant Image (optional)
@@ -270,6 +321,8 @@ export const VariantManager = ({
                   setVariantValue("");
                   setQuantity(0);
                   setPriceAdjustment(0);
+                  setLeastPrice(0);
+                  setLeastPriceCode("");
                   setImagePreview(null);
                   setImageBase64(null);
                 }}

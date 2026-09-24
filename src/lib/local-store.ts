@@ -24,6 +24,10 @@ type TableName =
   | "returns"
   | "return_items"
   | "replacement_items"
+  | "suppliers"
+  | "supplier_payments"
+  | "expenses"
+  | "companies"
   | "users"
   | "settings"
   | "licenses";
@@ -57,6 +61,10 @@ const TABLES: TableName[] = [
   "returns",
   "return_items",
   "replacement_items",
+  "suppliers",
+  "supplier_payments",
+  "expenses",
+  "companies",
   "users",
   "settings",
   "licenses",
@@ -69,6 +77,9 @@ const TABLE_COLUMNS: Record<TableName, string[]> = {
     "category",
     "price",
     "cost",
+    "least_price",
+    "least_price_code",
+    "company_id",
     "quantity",
     "image_url",
     "barcode",
@@ -85,6 +96,8 @@ const TABLE_COLUMNS: Record<TableName, string[]> = {
     "barcode",
     "quantity",
     "price_adjustment",
+    "least_price",
+    "least_price_code",
     "image_url",
     "created_at",
     "updated_at",
@@ -95,6 +108,8 @@ const TABLE_COLUMNS: Record<TableName, string[]> = {
     "total_amount",
     "discount_amount",
     "tax_amount",
+    "amount_paid",
+    "balance_amount",
     "payment_method",
     "status",
     "stripe_session_id",
@@ -143,6 +158,44 @@ const TABLE_COLUMNS: Record<TableName, string[]> = {
     "replacement_price",
     "status",
     "created_at",
+  ],
+  suppliers: [
+    "id",
+    "name",
+    "phone",
+    "email",
+    "address",
+    "products",
+    "total_amount",
+    "paid_amount",
+    "due_amount",
+    "payment_status",
+    "created_at",
+    "updated_at",
+  ],
+  supplier_payments: [
+    "id",
+    "supplier_id",
+    "payment_date",
+    "amount",
+    "notes",
+    "created_at",
+  ],
+  expenses: [
+    "id",
+    "expense_date",
+    "category",
+    "description",
+    "amount",
+    "created_at",
+    "updated_at",
+  ],
+  companies: [
+    "id",
+    "name",
+    "notes",
+    "created_at",
+    "updated_at",
   ],
   users: [
     "id",
@@ -262,6 +315,9 @@ function migrate(db: SqliteDb) {
       category TEXT NOT NULL,
       price REAL NOT NULL DEFAULT 0,
       cost REAL NOT NULL DEFAULT 0,
+      least_price REAL DEFAULT 0,
+      least_price_code TEXT DEFAULT '',
+      company_id TEXT,
       quantity INTEGER NOT NULL DEFAULT 0,
       image_url TEXT,
       barcode TEXT UNIQUE,
@@ -279,6 +335,8 @@ function migrate(db: SqliteDb) {
       barcode TEXT UNIQUE,
       quantity INTEGER NOT NULL DEFAULT 0,
       price_adjustment REAL NOT NULL DEFAULT 0,
+      least_price REAL DEFAULT 0,
+      least_price_code TEXT DEFAULT '',
       image_url TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -291,6 +349,8 @@ function migrate(db: SqliteDb) {
       total_amount REAL NOT NULL DEFAULT 0,
       discount_amount REAL NOT NULL DEFAULT 0,
       tax_amount REAL NOT NULL DEFAULT 0,
+      amount_paid REAL DEFAULT 0,
+      balance_amount REAL DEFAULT 0,
       payment_method TEXT NOT NULL DEFAULT 'cash',
       status TEXT DEFAULT 'completed',
       stripe_session_id TEXT,
@@ -338,6 +398,49 @@ function migrate(db: SqliteDb) {
       FOREIGN KEY (return_id) REFERENCES returns(id) ON DELETE CASCADE,
       FOREIGN KEY (product_id) REFERENCES products(id),
       FOREIGN KEY (variant_id) REFERENCES product_variants(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      address TEXT,
+      products TEXT,
+      total_amount REAL NOT NULL DEFAULT 0,
+      paid_amount REAL NOT NULL DEFAULT 0,
+      due_amount REAL NOT NULL DEFAULT 0,
+      payment_status TEXT NOT NULL DEFAULT 'unpaid',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS supplier_payments (
+      id TEXT PRIMARY KEY,
+      supplier_id TEXT NOT NULL,
+      payment_date TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id TEXT PRIMARY KEY,
+      expense_date TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'other',
+      description TEXT,
+      amount REAL NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS companies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS replacement_items (
@@ -398,6 +501,13 @@ function migrate(db: SqliteDb) {
   `);
 
   ensureColumn(db, "transaction_items", "variant_id", "TEXT");
+  ensureColumn(db, "products", "least_price", "REAL DEFAULT 0");
+  ensureColumn(db, "products", "least_price_code", "TEXT DEFAULT ''");
+  ensureColumn(db, "products", "company_id", "TEXT");
+  ensureColumn(db, "product_variants", "least_price", "REAL DEFAULT 0");
+  ensureColumn(db, "product_variants", "least_price_code", "TEXT DEFAULT ''");
+  ensureColumn(db, "transactions", "amount_paid", "REAL DEFAULT 0");
+  ensureColumn(db, "transactions", "balance_amount", "REAL DEFAULT 0");
 }
 
 function ensureColumn(db: SqliteDb, table: string, column: string, definition: string) {
@@ -440,6 +550,9 @@ function withDefaults(table: TableName, row: any) {
       category: row.category,
       price: Number(row.price || 0),
       cost: Number(row.cost || 0),
+      least_price: row.least_price == null ? 0 : Number(row.least_price || 0),
+      least_price_code: row.least_price_code || "",
+      company_id: row.company_id || null,
       quantity: Number(row.quantity || 0),
       image_url: row.image_url || "",
       barcode: row.barcode || `BCD-${Date.now()}`,
@@ -458,6 +571,8 @@ function withDefaults(table: TableName, row: any) {
       barcode: row.barcode || `BCD-${Date.now()}`,
       quantity: Number(row.quantity || 0),
       price_adjustment: Number(row.price_adjustment || 0),
+      least_price: row.least_price == null ? 0 : Number(row.least_price || 0),
+      least_price_code: row.least_price_code || "",
       image_url: row.image_url || null,
       updated_at: row.updated_at || timestamp,
     } satisfies ProductVariantRow;
@@ -470,6 +585,8 @@ function withDefaults(table: TableName, row: any) {
       total_amount: Number(row.total_amount || 0),
       discount_amount: Number(row.discount_amount || 0),
       tax_amount: Number(row.tax_amount || 0),
+      amount_paid: row.amount_paid == null ? 0 : Number(row.amount_paid || 0),
+      balance_amount: row.balance_amount == null ? 0 : Number(row.balance_amount || 0),
       payment_method: row.payment_method || "cash",
       status: row.status || "completed",
       stripe_session_id: null,
@@ -526,6 +643,55 @@ function withDefaults(table: TableName, row: any) {
       replacement_price: Number(row.replacement_price || 0),
       status: row.status || "pending",
     } satisfies ReplacementItemRow;
+  }
+
+  if (table === "suppliers") {
+    const total = Number(row.total_amount || 0);
+    const paid = Number(row.paid_amount || 0);
+    const due = Math.max(0, Number(row.due_amount ?? total - paid));
+    return {
+      ...base,
+      name: row.name,
+      phone: row.phone || "",
+      email: row.email || "",
+      address: row.address || "",
+      products: row.products || "",
+      total_amount: total,
+      paid_amount: paid,
+      due_amount: due,
+      payment_status: row.payment_status || (due <= 0 && total > 0 ? "paid" : paid > 0 ? "partial" : "unpaid"),
+      updated_at: row.updated_at || timestamp,
+    };
+  }
+
+  if (table === "supplier_payments") {
+    return {
+      ...base,
+      supplier_id: row.supplier_id,
+      payment_date: row.payment_date || timestamp,
+      amount: Number(row.amount || 0),
+      notes: row.notes || "",
+    };
+  }
+
+  if (table === "expenses") {
+    return {
+      ...base,
+      expense_date: row.expense_date || timestamp,
+      category: row.category || "other",
+      description: row.description || "",
+      amount: Number(row.amount || 0),
+      updated_at: row.updated_at || timestamp,
+    };
+  }
+
+  if (table === "companies") {
+    return {
+      ...base,
+      name: row.name,
+      notes: row.notes || "",
+      updated_at: row.updated_at || timestamp,
+    };
   }
 
   return {
