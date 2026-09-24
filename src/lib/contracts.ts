@@ -73,6 +73,8 @@ export function normalizeProductVariant(row: ProductVariantRow): ProductVariant 
     product_id: row.product_id,
     variant_type: row.variant_type,
     variant_value: row.variant_value,
+    variant_type_2: row.variant_type_2,
+    variant_value_2: row.variant_value_2,
     sku: nullableText(row.sku),
     barcode: nullableText(row.barcode),
     quantity: row.quantity ?? 0,

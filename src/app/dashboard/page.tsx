@@ -25,29 +25,25 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { AuthContext } from "@/lib/auth-context";
-import { getCategoryPresets, getStoredIndustryMode } from "@/lib/industry-presets";
 import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
-import type { BusinessProfile, IndustryMode } from "@/types";
+import type { BusinessProfile, ProductVariant } from "@/types";
 
 // Demo data (no longer used - all data is fetched from database)
 
 export default function Dashboard() {
   const authContext = useContext(AuthContext);
   const [dateFilter, setDateFilter] = useState("today");
-  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [productFilter, setProductFilter] = useState("all");
+  const [companyFilter, setCompanyFilter] = useState("all");
   const [products, setProducts] = useState<any[]>([]);
+  const [companies, setCompanies] = useState<any[]>([]);
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [transactionItems, setTransactionItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [industryMode, setIndustryMode] = useState<IndustryMode>("general");
   const [currency, setCurrency] = useState(DEFAULT_CURRENCY);
 
-  const categoryPresets = getCategoryPresets(industryMode);
   const isManagerDayScope = authContext?.user?.role === "manager";
-
-  useEffect(() => {
-    setIndustryMode(getStoredIndustryMode());
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -104,6 +100,24 @@ export default function Dashboard() {
             }
           }
 
+          const { data: companiesData, error: companiesError } = await supabase
+            .from("companies")
+            .select("*")
+            .is("user_id", null)
+            .order("name", { ascending: true });
+
+          if (!companiesError && active) {
+            setCompanies(companiesData || []);
+          }
+
+          const { data: variantsData, error: variantsError } = await supabase
+            .from("product_variants")
+            .select("*");
+
+          if (!variantsError && active) {
+            setVariants((variantsData || []) as ProductVariant[]);
+          }
+
           // Fetch transactions where user_id is NULL
           const { data: transactionsData, error: transactionsError } = await supabase
             .from("transactions")
@@ -141,6 +155,23 @@ export default function Dashboard() {
           if (active) {
             setProducts(productsData || []);
           }
+        }
+
+        const { data: companiesData, error: companiesError } = await supabase
+          .from("companies")
+          .select("*")
+          .order("name", { ascending: true });
+
+        if (!companiesError && active) {
+          setCompanies(companiesData || []);
+        }
+
+        const { data: variantsData, error: variantsError } = await supabase
+          .from("product_variants")
+          .select("*");
+
+        if (!variantsError && active) {
+          setVariants((variantsData || []) as ProductVariant[]);
         }
 
         // Fetch all transactions (for authenticated users)
@@ -189,14 +220,15 @@ export default function Dashboard() {
       ? transactionItems.filter((item) => scopedTransactionIds.has(item.transaction_id))
       : transactionItems;
 
-    if (categoryFilter === "all") {
-      return scopedItems;
-    }
-    
-    // Filter items by category
     return scopedItems.filter((item) => {
       const product = products.find((p) => p.id === item.product_id);
-      return product && product.category === categoryFilter;
+      const productMatches = productFilter === "all" || item.product_id === productFilter;
+      if (!productMatches) return false;
+
+      const companyMatches = companyFilter === "all" || (product && (product.company_id || "") === companyFilter);
+      if (!companyMatches) return false;
+
+      return true;
     });
   };
 
@@ -209,10 +241,14 @@ export default function Dashboard() {
     
     // Calculate inventory value
     const inventoryValue = 
-      categoryFilter === "all"
+      companyFilter !== "all"
+        ? products
+            .filter((p) => (p.company_id || "") === companyFilter)
+            .reduce((sum, p) => sum + ((p.cost || 0) * (p.quantity || 0)), 0)
+        : productFilter === "all"
         ? products.reduce((sum, p) => sum + ((p.cost || 0) * (p.quantity || 0)), 0)
         : products
-            .filter((p) => p.category === categoryFilter)
+            .filter((p) => p.id === productFilter)
             .reduce((sum, p) => sum + ((p.cost || 0) * (p.quantity || 0)), 0);
     
     // Calculate profit from filtered transactions
@@ -267,7 +303,7 @@ export default function Dashboard() {
         return transaction && transaction.id === t.id;
       });
       
-      if (!hasFilteredItems && categoryFilter !== "all") return acc;
+      if (!hasFilteredItems) return acc;
       
       const date = t.transaction_date;
       if (!acc[date]) {
@@ -289,60 +325,62 @@ export default function Dashboard() {
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   };
 
-  // Generate category data from transactions
-  const generateCategoryData = () => {
-    const categoryMap = new Map<string, number>();
-    let totalSales = 0;
-    
-    // Initialize all categories
-    categoryPresets.forEach((cat) => categoryMap.set(cat, 0));
-    
-    // Get filtered items
-    const filteredItems = categoryFilter === "all" 
-      ? getFilteredItems()
-      : getFilteredItems().filter((item) => {
-          const product = products.find((p) => p.id === item.product_id);
-          return product && product.category === categoryFilter;
-        });
-    
-    // Calculate sales by category (or just show selected category)
-    if (categoryFilter !== "all") {
-      // If a specific category is selected, show 100% for that category
-      const totalByCategory = filteredItems.reduce((sum, item) => sum + (item.subtotal || 0), 0);
-      return [
-        {
-          name: categoryFilter,
-          value: 100,
-          sales: Math.round(totalByCategory * 100) / 100,
-        },
-      ];
-    } else {
-      // Show all categories
-      getFilteredItems().forEach((item) => {
-        const product = products.find((p) => p.id === item.product_id);
-        if (product) {
-          const category = product.category;
-          const sales = categoryMap.get(category) || 0;
-          categoryMap.set(category, sales + (item.subtotal || 0));
-          totalSales += item.subtotal || 0;
-        }
-      });
+  const getVariantLabel = (variantId: string | null | undefined, productName = "Product") => {
+    if (!variantId) return productName;
+    const variant = variants.find((entry) => entry.id === variantId);
+    if (!variant) return productName;
 
-      // Convert to percentage and return
-      return Array.from(categoryMap.entries())
-        .map(([name, sales]) => ({
-          name,
-          value: totalSales > 0 ? Math.round((sales / totalSales) * 100) : 0,
-          sales: Math.round(sales * 100) / 100,
-        }))
-        .filter((item) => item.value > 0); // Only show categories with sales
-    }
+    const parts = [
+      variant.variant_type && variant.variant_value
+        ? `${variant.variant_type}: ${variant.variant_value}`
+        : "",
+      variant.variant_type_2 && variant.variant_value_2
+        ? `${variant.variant_type_2}: ${variant.variant_value_2}`
+        : "",
+    ].filter(Boolean);
+
+    return parts.length > 0 ? `${productName} - ${parts.join(" / ")}` : productName;
+  };
+
+  // Generate sales distribution by variant when variants exist, otherwise by product/category.
+  const generateDistributionData = () => {
+    const salesMap = new Map<string, number>();
+    let totalSales = 0;
+    const filteredItems = getFilteredItems();
+    const hasVariantSales = filteredItems.some((item) => item.variant_id);
+    
+
+    filteredItems.forEach((item) => {
+      const product = products.find((p) => p.id === item.product_id);
+      const productName = product?.name || "Product";
+      const label = hasVariantSales
+        ? getVariantLabel(item.variant_id, productName)
+        : productName || product?.category || "Product";
+      const sales = salesMap.get(label) || 0;
+      salesMap.set(label, sales + (item.subtotal || 0));
+      totalSales += item.subtotal || 0;
+    });
+
+    return Array.from(salesMap.entries())
+      .map(([name, sales]) => ({
+        name,
+        value: totalSales > 0 ? Math.round((sales / totalSales) * 100) : 0,
+        sales: Math.round(sales * 100) / 100,
+      }))
+      .filter((item) => item.sales > 0)
+      .sort((a, b) => b.sales - a.sales);
   };
 
   // Sample data - will be replaced with real data from Supabase
   const salesData = generateSalesData();
 
-  const categoryData = generateCategoryData();
+  const distributionData = generateDistributionData();
+  const distributionTitle = distributionData.some((entry) => entry.name.includes(" - "))
+    ? "Sales by Variant"
+    : "Sales by Product / Service";
+  const productOptions = products.filter(
+    (product) => companyFilter === "all" || (product.company_id || "") === companyFilter
+  );
 
   const COLORS = [
     "#3b82f6",
@@ -422,14 +460,30 @@ export default function Dashboard() {
               )}
 
               <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
+                value={companyFilter}
+                onChange={(e) => {
+                  setCompanyFilter(e.target.value);
+                  setProductFilter("all");
+                }}
                 className="input-base"
               >
-                <option value="all">All Categories</option>
-                {categoryPresets.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
+                <option value="all">All Companies</option>
+                {companies.map((company) => (
+                  <option key={company.id} value={company.id}>
+                    {company.name}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={productFilter}
+                onChange={(e) => setProductFilter(e.target.value)}
+                className="input-base"
+              >
+                <option value="all">All Products / Services</option>
+                {productOptions.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.name}
                   </option>
                 ))}
               </select>
@@ -500,15 +554,15 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </div>
 
-          {/* Category Distribution */}
+          {/* Sales Distribution */}
           <div className="card">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Sales by Category
+              {distributionTitle}
             </h2>
             
-            {/* Category Legend */}
+            {/* Distribution Legend */}
             <div className="mb-4 space-y-2">
-              {categoryData.map((entry, index) => (
+              {distributionData.map((entry, index) => (
                 <div key={index} className="flex items-center gap-3">
                   <div
                     className="w-4 h-4 rounded"
@@ -524,7 +578,7 @@ export default function Dashboard() {
             <ResponsiveContainer width="100%" height={250}>
               <PieChart>
                 <Pie
-                  data={categoryData}
+                  data={distributionData}
                   cx="50%"
                   cy="50%"
                   labelLine={false}
@@ -532,7 +586,7 @@ export default function Dashboard() {
                   fill="#8884d8"
                   dataKey="value"
                 >
-                  {categoryData.map((_, index) => (
+                  {distributionData.map((_, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>

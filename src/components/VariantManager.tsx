@@ -1,16 +1,34 @@
 "use client";
 
 import { useState } from "react";
-import { Barcode, Plus} from "lucide-react";
+import { Barcode, Edit, Plus, Trash2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { ProductVariant } from "@/types";
-import { addProductVariant, updateVariantStock } from "@/lib/supabase";
+import {
+  addProductVariant,
+  deleteProductVariant,
+  updateProductVariant,
+  updateVariantStock,
+} from "@/lib/supabase";
 
 interface VariantManagerProps {
   productId: string;
   variants: ProductVariant[];
   onVariantsUpdated: () => void;
   onPrintBarcode?: (variant: ProductVariant) => void;
+}
+
+const VARIANT_TYPES = ["size", "color", "material"];
+
+function labelVariant(variant: ProductVariant) {
+  return [
+    `${variant.variant_type}: ${variant.variant_value}`,
+    variant.variant_type_2 && variant.variant_value_2
+      ? `${variant.variant_type_2}: ${variant.variant_value_2}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" / ");
 }
 
 export const VariantManager = ({
@@ -20,16 +38,32 @@ export const VariantManager = ({
   onPrintBarcode,
 }: VariantManagerProps) => {
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [variantType, setVariantType] = useState("size");
   const [variantValue, setVariantValue] = useState("");
-  const [quantity, setQuantity] = useState(0);
-  const [priceAdjustment, setPriceAdjustment] = useState(0);
-  const [leastPrice, setLeastPrice] = useState(0);
+  const [variantType2, setVariantType2] = useState("");
+  const [variantValue2, setVariantValue2] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [priceAdjustment, setPriceAdjustment] = useState("");
+  const [leastPrice, setLeastPrice] = useState("");
   const [leastPriceCode, setLeastPriceCode] = useState("");
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [ ,setEditingId] = useState<string | null>(null);
+
+  const resetForm = () => {
+    setEditingId(null);
+    setVariantType("size");
+    setVariantValue("");
+    setVariantType2("");
+    setVariantValue2("");
+    setQuantity("");
+    setPriceAdjustment("");
+    setLeastPrice("");
+    setLeastPriceCode("");
+    setImagePreview(null);
+    setImageBase64(null);
+  };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -49,52 +83,89 @@ export const VariantManager = ({
     reader.readAsDataURL(file);
   };
 
-  const handleAddVariant = async (e: React.FormEvent) => {
+  const handleEditVariant = (variant: ProductVariant) => {
+    setEditingId(variant.id);
+    setVariantType(variant.variant_type || "size");
+    setVariantValue(variant.variant_value || "");
+    setVariantType2(variant.variant_type_2 || "");
+    setVariantValue2(variant.variant_value_2 || "");
+    setQuantity(variant.quantity ? String(variant.quantity) : "");
+    setPriceAdjustment(variant.price_adjustment ? String(variant.price_adjustment) : "");
+    setLeastPrice(variant.least_price ? String(variant.least_price) : "");
+    setLeastPriceCode(variant.least_price_code || "");
+    setImagePreview(variant.image_url || null);
+    setImageBase64(null);
+    setShowForm(true);
+  };
+
+  const handleDeleteVariant = async (variant: ProductVariant) => {
+    if (!confirm(`Delete variant ${labelVariant(variant)}?`)) return;
+
+    const success = await deleteProductVariant(variant.id);
+    if (success) {
+      toast.success("Variant deleted");
+      onVariantsUpdated();
+    } else {
+      toast.error("Failed to delete variant");
+    }
+  };
+
+  const handleSaveVariant = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!variantValue.trim()) {
-      toast.error("Please fill in all fields");
+      toast.error("Please fill in the variant value");
       return;
     }
 
     try {
       setLoading(true);
-      
-      // Auto-generate SKU and Barcode
-      const sku = `${variantType.toUpperCase().slice(0, 2)}-${variantValue.replace(/\s+/g, '').slice(0, 5)}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
-      const barcode = `${Date.now().toString().slice(-8)}${Math.random().toString(36).substr(2, 2).toUpperCase()}`;
-      
-      const result = await addProductVariant(
-        productId,
-        variantType,
-        variantValue,
-        sku,
-        barcode,
-        quantity,
-        priceAdjustment,
-        leastPrice,
-        leastPriceCode || undefined,
-        imageBase64 || undefined
-      );
+      const quantityValue = Math.max(0, Number(quantity || 0));
+      const priceAdjustmentValue = Number(priceAdjustment || 0);
+      const leastPriceValue = Math.max(0, Number(leastPrice || 0));
+      const secondType = variantType2 || null;
+      const secondValue = secondType && variantValue2.trim() ? variantValue2.trim() : null;
 
-      if (result) {
-        toast.success(`Variant added: ${variantType} - ${variantValue}`);
-        setVariantValue("");
-        setQuantity(0);
-        setPriceAdjustment(0);
-        setLeastPrice(0);
-        setLeastPriceCode("");
-        setImagePreview(null);
-        setImageBase64(null);
+      const success = editingId
+        ? await updateProductVariant(editingId, {
+            variant_type: variantType,
+            variant_value: variantValue,
+            variant_type_2: secondType,
+            variant_value_2: secondValue,
+            quantity: quantityValue,
+            price_adjustment: priceAdjustmentValue,
+            least_price: leastPriceValue,
+            least_price_code: leastPriceCode || "",
+            ...(imageBase64 ? { image_url: imageBase64 } : {}),
+          })
+        : Boolean(
+            await addProductVariant(
+              productId,
+              variantType,
+              variantValue,
+              `${variantType.toUpperCase().slice(0, 2)}-${variantValue.replace(/\s+/g, "").slice(0, 5)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+              `${Date.now().toString().slice(-8)}${Math.random().toString(36).slice(2, 4).toUpperCase()}`,
+              quantityValue,
+              priceAdjustmentValue,
+              leastPriceValue,
+              leastPriceCode || undefined,
+              secondType || undefined,
+              secondValue || undefined,
+              imageBase64 || undefined
+            )
+          );
+
+      if (success) {
+        toast.success(editingId ? "Variant updated" : "Variant added");
+        resetForm();
         setShowForm(false);
-        setEditingId(null);
         onVariantsUpdated();
       } else {
-        toast.error("Failed to add variant");
+        toast.error(editingId ? "Failed to update variant" : "Failed to add variant");
       }
     } catch (error) {
-      console.error("Error adding variant:", error);
-      toast.error("Error adding variant");
+      console.error("Error saving variant:", error);
+      toast.error("Error saving variant");
     } finally {
       setLoading(false);
     }
@@ -117,7 +188,6 @@ export const VariantManager = ({
 
   return (
     <div className="space-y-4">
-      {/* Variants Display as Badges */}
       <div>
         <h4 className="text-sm font-semibold text-gray-900 mb-3">Added Variants</h4>
         {variants.length === 0 ? (
@@ -140,17 +210,13 @@ export const VariantManager = ({
                     />
                   </div>
                 )}
-                <span>
-                  <strong>{variant.variant_type}:</strong> {variant.variant_value}
-                </span>
+                <span>{labelVariant(variant)}</span>
                 <div className="flex items-center gap-1 text-xs bg-blue-200 px-2 py-0.5 rounded">
                   <span>Qty:</span>
                   <input
                     type="number"
-                    value={variant.quantity}
-                    onChange={(e) =>
-                      handleUpdateStock(variant.id, Number(e.target.value))
-                    }
+                    value={variant.quantity || ""}
+                    onChange={(e) => handleUpdateStock(variant.id, Math.max(0, Number(e.target.value) || 0))}
                     min="0"
                     className="w-12 px-1 py-0 border border-blue-400 rounded text-xs text-center bg-white"
                     title="Edit stock"
@@ -176,131 +242,165 @@ export const VariantManager = ({
                     <Barcode className="w-3.5 h-3.5" />
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => handleEditVariant(variant)}
+                  className="p-1 text-green-700 hover:bg-blue-200 rounded"
+                  title="Edit variant"
+                >
+                  <Edit className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteVariant(variant)}
+                  className="p-1 text-red-700 hover:bg-red-100 rounded"
+                  title="Delete variant"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* Add Variant Form */}
       <div className="border-t pt-4">
         {!showForm ? (
           <button
-            onClick={() => setShowForm(true)}
+            onClick={() => {
+              resetForm();
+              setShowForm(true);
+            }}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 text-white text-sm rounded font-medium hover:bg-blue-700 transition-colors"
           >
             <Plus className="w-4 h-4" />
             Add New Variant
           </button>
         ) : (
-          <form onSubmit={handleAddVariant} className="space-y-3 p-3 bg-gray-50 rounded border border-blue-200">
-            <h4 className="font-semibold text-gray-900 text-sm">New Variant</h4>
+          <form onSubmit={handleSaveVariant} className="space-y-3 p-3 bg-gray-50 rounded border border-blue-200">
+            <h4 className="font-semibold text-gray-900 text-sm">{editingId ? "Edit Variant" : "New Variant"}</h4>
 
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
-                Type *
-              </label>
-              <select
-                value={variantType}
-                onChange={(e) => setVariantType(e.target.value)}
-                className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm bg-white"
-              >
-                <option value="size">Size</option>
-                <option value="color">Color</option>
-                <option value="material">Material</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
-                Value * <span className="text-gray-500">(e.g., M, Red, Leather)</span>
-              </label>
-              <input
-                type="text"
-                value={variantValue}
-                onChange={(e) => setVariantValue(e.target.value)}
-                placeholder="Enter variant value"
-                className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
-                autoFocus
-              />
-            </div>
-
-            <div className="p-2 bg-blue-50 rounded text-xs text-gray-600 border border-blue-200">
-              SKU and Barcode will be auto-generated
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Type *</label>
+                <select
+                  value={variantType}
+                  onChange={(e) => {
+                    setVariantType(e.target.value);
+                    if (variantType2 === e.target.value) {
+                      setVariantType2("");
+                      setVariantValue2("");
+                    }
+                  }}
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm bg-white"
+                >
+                  {VARIANT_TYPES.map((type) => (
+                    <option key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Value *</label>
+                <input
+                  type="text"
+                  value={variantValue}
+                  onChange={(e) => setVariantValue(e.target.value)}
+                  placeholder="M, Red, Leather"
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                  autoFocus
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Stock Qty
-                </label>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Second Type</label>
+                <select
+                  value={variantType2}
+                  onChange={(e) => {
+                    setVariantType2(e.target.value);
+                    if (!e.target.value) setVariantValue2("");
+                  }}
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm bg-white"
+                >
+                  <option value="">None</option>
+                  {VARIANT_TYPES.filter((type) => type !== variantType).map((type) => (
+                    <option key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Second Value</label>
+                <input
+                  type="text"
+                  value={variantValue2}
+                  onChange={(e) => setVariantValue2(e.target.value)}
+                  disabled={!variantType2}
+                  placeholder="Red"
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm disabled:bg-gray-100"
+                />
+              </div>
+            </div>
+
+            {!editingId && (
+              <div className="p-2 bg-blue-50 rounded text-xs text-gray-600 border border-blue-200">
+                SKU and Barcode will be auto-generated
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block text-xs font-medium text-gray-700">
+                Stock Qty
                 <input
                   type="number"
                   value={quantity}
-                  onChange={(e) => setQuantity(Number(e.target.value))}
+                  onChange={(e) => setQuantity(e.target.value)}
                   min="0"
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                  className="w-full mt-1 px-2 py-1.5 border border-gray-300 rounded text-sm"
                 />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Price Adj (+/-)
-                </label>
+              </label>
+              <label className="block text-xs font-medium text-gray-700">
+                Price Adj (+/-)
                 <input
                   type="number"
                   value={priceAdjustment}
-                  onChange={(e) => setPriceAdjustment(Number(e.target.value))}
+                  onChange={(e) => setPriceAdjustment(e.target.value)}
                   step="0.01"
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                  className="w-full mt-1 px-2 py-1.5 border border-gray-300 rounded text-sm"
                 />
-              </div>
+              </label>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Least Price
-                </label>
+              <label className="block text-xs font-medium text-gray-700">
+                Least Price
                 <input
                   type="number"
                   value={leastPrice}
-                  onChange={(e) => setLeastPrice(Math.max(0, Number(e.target.value) || 0))}
+                  onChange={(e) => setLeastPrice(e.target.value)}
                   min="0"
                   step="0.01"
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                  className="w-full mt-1 px-2 py-1.5 border border-gray-300 rounded text-sm"
                 />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Least Price Code
-                </label>
+              </label>
+              <label className="block text-xs font-medium text-gray-700">
+                Least Price Code
                 <input
                   type="text"
                   value={leastPriceCode}
                   onChange={(e) => setLeastPriceCode(e.target.value)}
-                  className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                  className="w-full mt-1 px-2 py-1.5 border border-gray-300 rounded text-sm"
                   placeholder="Code"
                 />
-              </div>
+              </label>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
-                Variant Image (optional)
-              </label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleImageChange}
-                className="w-full text-xs"
-              />
+              <label className="block text-xs font-medium text-gray-700 mb-1">Variant Image (optional)</label>
+              <input type="file" accept="image/*" onChange={handleImageChange} className="w-full text-xs" />
               {imagePreview && (
                 <div className="mt-2 p-2 bg-white rounded border border-gray-300">
-                  <img
-                    src={imagePreview}
-                    alt="Preview"
-                    className="w-full h-32 object-cover rounded"
-                  />
+                  <img src={imagePreview} alt="Preview" className="w-full h-32 object-cover rounded" />
                 </div>
               )}
             </div>
@@ -311,20 +411,13 @@ export const VariantManager = ({
                 disabled={loading}
                 className="flex-1 px-3 py-1.5 bg-green-600 text-white text-sm rounded font-medium hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {loading ? "Saving..." : "Add Variant"}
+                {loading ? "Saving..." : editingId ? "Update Variant" : "Add Variant"}
               </button>
               <button
                 type="button"
                 onClick={() => {
+                  resetForm();
                   setShowForm(false);
-                  setEditingId(null);
-                  setVariantValue("");
-                  setQuantity(0);
-                  setPriceAdjustment(0);
-                  setLeastPrice(0);
-                  setLeastPriceCode("");
-                  setImagePreview(null);
-                  setImageBase64(null);
                 }}
                 className="flex-1 px-3 py-1.5 bg-gray-400 text-white text-sm rounded hover:bg-gray-500 transition-colors"
               >
@@ -337,3 +430,4 @@ export const VariantManager = ({
     </div>
   );
 };
+

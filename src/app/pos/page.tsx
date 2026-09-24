@@ -30,6 +30,8 @@ interface CartItem {
   variant_id?: string;                  // NEW: variant support
   variant_type?: string;                // NEW: e.g., 'size'
   variant_value?: string;               // NEW: e.g., 'M'
+  variant_type_2?: string | null;
+  variant_value_2?: string | null;
 }
 
 interface Product {
@@ -152,6 +154,14 @@ function POSContent() {
 
   const currency = receiptSettings.currency || DEFAULT_CURRENCY;
   const money = useCallback((amount: number | string | null | undefined) => formatCurrency(amount, currency), [currency]);
+  const variantLabel = useCallback(
+    (item: Pick<CartItem, "variant_type" | "variant_value" | "variant_type_2" | "variant_value_2">) =>
+      [
+        item.variant_type && item.variant_value ? `${item.variant_type}: ${item.variant_value}` : "",
+        item.variant_type_2 && item.variant_value_2 ? `${item.variant_type_2}: ${item.variant_value_2}` : "",
+      ].filter(Boolean).join(" / "),
+    []
+  );
   const discountCurrencyLabel = discountUnitLabel(currency);
   const receiptLayout = receiptSettings.receiptLayout || "standard";
   const receiptPaperWidth = receiptSettings.receiptPaperWidth || "80mm";
@@ -743,6 +753,8 @@ function POSContent() {
           variant_id: variant.id,
           variant_type: variant.variant_type,
           variant_value: variant.variant_value,
+          variant_type_2: variant.variant_type_2,
+          variant_value_2: variant.variant_value_2,
         },
       ];
     });
@@ -1092,9 +1104,8 @@ function POSContent() {
     const isDetailed = receiptLayout === "detailed";
     const rows = receipt.items
       .map((item) => {
-        const variant = item.variant_type && item.variant_value
-          ? `<div class="muted">${item.variant_type}: ${item.variant_value}</div>`
-          : "";
+        const label = variantLabel(item);
+        const variant = label ? `<div class="muted">${label}</div>` : "";
         const discountText = isDetailed && item.discount
           ? `<div class="muted">Discount: ${item.discount}${item.discountType === "percentage" ? "%" : ` ${discountCurrencyLabel}`}</div>`
           : "";
@@ -1333,9 +1344,9 @@ function POSContent() {
                           <h3 className="font-medium text-sm text-gray-900 line-clamp-1">
                             {item.name}
                           </h3>
-                          {item.variant_type && item.variant_value && (
+                          {variantLabel(item) && (
                             <p className="text-xs text-gray-600">
-                              {item.variant_type}: {item.variant_value}
+                              {variantLabel(item)}
                             </p>
                           )}
                         </div>
@@ -1365,9 +1376,9 @@ function POSContent() {
                           type="number"
                           min="0"
                           placeholder="0"
-                          value={item.discount ?? 0}
+                          value={item.discount ? String(item.discount) : ""}
                           onChange={(e) => {
-                            const val = e.target.value === "" ? 0 : parseInt(e.target.value) || 0;
+                            const val = e.target.value === "" ? 0 : Number(e.target.value) || 0;
                             const itemTotal = item.price * item.quantity;
                             let validDiscount = Math.max(0, val);
 
@@ -1431,9 +1442,9 @@ function POSContent() {
                     type="number"
                     min="0"
                     placeholder="0"
-                    value={discount ?? 0}
+                    value={discount ? String(discount) : ""}
                     onChange={(e) => {
-                      const val = e.target.value === "" ? 0 : parseInt(e.target.value) || 0;
+                      const val = e.target.value === "" ? 0 : Number(e.target.value) || 0;
                       let validDiscount = Math.max(0, val);
 
                       // Validate based on discount type
@@ -1506,7 +1517,7 @@ function POSContent() {
                   <input
                     type="number"
                     min="0"
-                    value={amountPaid || ""}
+                    value={amountPaid ? String(amountPaid) : ""}
                     onChange={(e) => setAmountPaid(Math.max(0, Number(e.target.value) || 0))}
                     className="input-base text-sm mt-2"
                     placeholder="0"
@@ -1893,9 +1904,9 @@ function POSContent() {
                       <div className="flex justify-between gap-3">
                         <div>
                           <p className="font-semibold">{item.name}</p>
-                          {item.variant_type && item.variant_value && (
+                          {variantLabel(item) && (
                             <p className="text-xs text-gray-600">
-                              {item.variant_type}: {item.variant_value}
+                              {variantLabel(item)}
                             </p>
                           )}
                           {receiptLayout === "detailed" && item.discount > 0 && (
@@ -2139,6 +2150,8 @@ function POSContent() {
                             variant_id: variant.id,
                             variant_type: variant.variant_type,
                             variant_value: variant.variant_value,
+                            variant_type_2: variant.variant_type_2,
+                            variant_value_2: variant.variant_value_2,
                           };
                           setReplacementCart([...replacementCart, newItem]);
                         }
@@ -2159,7 +2172,12 @@ function POSContent() {
                     <div className="flex justify-between items-start">
                       <div>
                         <p className="font-semibold text-gray-900">
-                          {variant.variant_type}: {variant.variant_value}
+                          {[
+                            `${variant.variant_type}: ${variant.variant_value}`,
+                            variant.variant_type_2 && variant.variant_value_2
+                              ? `${variant.variant_type_2}: ${variant.variant_value_2}`
+                              : "",
+                          ].filter(Boolean).join(" / ")}
                         </p>
                         <p className="text-xs text-gray-600">
                           Stock: {variant.quantity}

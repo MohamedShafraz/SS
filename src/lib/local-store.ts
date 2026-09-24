@@ -92,6 +92,8 @@ const TABLE_COLUMNS: Record<TableName, string[]> = {
     "product_id",
     "variant_type",
     "variant_value",
+    "variant_type_2",
+    "variant_value_2",
     "sku",
     "barcode",
     "quantity",
@@ -331,6 +333,8 @@ function migrate(db: SqliteDb) {
       product_id TEXT NOT NULL,
       variant_type TEXT NOT NULL,
       variant_value TEXT NOT NULL,
+      variant_type_2 TEXT,
+      variant_value_2 TEXT,
       sku TEXT UNIQUE,
       barcode TEXT UNIQUE,
       quantity INTEGER NOT NULL DEFAULT 0,
@@ -504,6 +508,8 @@ function migrate(db: SqliteDb) {
   ensureColumn(db, "products", "least_price", "REAL DEFAULT 0");
   ensureColumn(db, "products", "least_price_code", "TEXT DEFAULT ''");
   ensureColumn(db, "products", "company_id", "TEXT");
+  ensureColumn(db, "product_variants", "variant_type_2", "TEXT");
+  ensureColumn(db, "product_variants", "variant_value_2", "TEXT");
   ensureColumn(db, "product_variants", "least_price", "REAL DEFAULT 0");
   ensureColumn(db, "product_variants", "least_price_code", "TEXT DEFAULT ''");
   ensureColumn(db, "transactions", "amount_paid", "REAL DEFAULT 0");
@@ -567,6 +573,8 @@ function withDefaults(table: TableName, row: any) {
       product_id: row.product_id,
       variant_type: row.variant_type,
       variant_value: row.variant_value,
+      variant_type_2: row.variant_type_2 || null,
+      variant_value_2: row.variant_value_2 || null,
       sku: row.sku || `SKU-${Date.now()}`,
       barcode: row.barcode || `BCD-${Date.now()}`,
       quantity: Number(row.quantity || 0),

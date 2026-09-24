@@ -13,9 +13,19 @@ import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
 import { getActiveBarcodePreset } from "@/lib/barcode-layout";
 
 type HardwarePrinter = { name: string; displayName?: string; isDefault?: boolean };
+type HardwarePrintResult = { success: boolean; printerName?: string; error?: string; opened?: boolean };
 type HardwareBridge = {
   listPrinters: () => Promise<HardwarePrinter[]>;
-  printBarcode: (html: string, printerName?: string) => Promise<{ success: boolean; printerName?: string; error?: string }>;
+  printBarcode: (
+    html: string,
+    printerName?: string,
+    options?: { pageWidthMm?: number; pageHeightMm?: number }
+  ) => Promise<HardwarePrintResult>;
+  printBarcodePdf?: (
+    pdfBase64: string,
+    printerName?: string
+  ) => Promise<HardwarePrintResult>;
+  previewBarcodePdf?: (pdfBase64: string) => Promise<{ success: boolean; error?: string }>;
 };
 
 interface Product {
@@ -78,6 +88,7 @@ export default function ProductsPage() {
   const [selectedPrinterName, setSelectedPrinterName] = useState("");
   const [barcodeCopies, setBarcodeCopies] = useState(1);
   const [printingBarcode, setPrintingBarcode] = useState(false);
+  const [previewingBarcodePdf, setPreviewingBarcodePdf] = useState(false);
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [variantsLoading, setVariantsLoading] = useState(false);
   const barcodePreviewRef = useRef<SVGSVGElement>(null);
@@ -379,9 +390,15 @@ export default function ProductsPage() {
   const generateVariantBarcodeSticker = (variant: ProductVariant) => {
     const productName = formData.name || "Variant";
     const productPrice = Number(formData.price || 0);
+    const variantParts = [
+      `${variant.variant_type}: ${variant.variant_value}`,
+      variant.variant_type_2 && variant.variant_value_2
+        ? `${variant.variant_type_2}: ${variant.variant_value_2}`
+        : "",
+    ].filter(Boolean).join(" / ");
     setBarcodeTarget({
       kind: "variant",
-      name: `${productName} - ${variant.variant_type}: ${variant.variant_value}`,
+      name: `${productName} - ${variantParts}`,
       barcode: variant.barcode,
       sku: variant.sku,
       price: productPrice + Number(variant.price_adjustment || 0),
@@ -408,35 +425,87 @@ export default function ProductsPage() {
     });
   }, [barcodeTarget]);
 
-  const makeBarcodeSvg = (value: string) => {
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    JsBarcode(svg, value, {
+  const escapeHtml = (value: string | number | null | undefined) =>
+    String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+
+  const makeBarcodeImage = (value: string, displayValue = activeBarcodePreset.showBarcodeText) => {
+    const canvas = document.createElement("canvas");
+    JsBarcode(canvas, value, {
       format: "CODE128",
       width: activeBarcodePreset.barcodeBarWidth,
       height: activeBarcodePreset.barcodeHeightMm * 3.78,
-      displayValue: activeBarcodePreset.showBarcodeText,
+      displayValue,
       margin: 0,
       fontSize: 9,
     });
-    return svg.outerHTML;
+    return `<img src="${canvas.toDataURL("image/png")}" alt="" />`;
+  };
+
+  const isGa2408tLayout = () => {
+    const preset = activeBarcodePreset;
+    return (
+      preset.id === "builtin-ga-2408t-102mm-3up-25mm" ||
+      (
+        preset.columns === 3 &&
+        preset.rows === 1 &&
+        Math.abs(Number(preset.stickerHeightMm) - 25) <= 0.5 &&
+        Math.abs(Number(preset.columnGapMm) - 4) <= 0.5 &&
+        Math.abs(Number(preset.marginLeftMm)) <= 0.5 &&
+        Math.abs(Number(preset.marginRightMm)) <= 0.5
+      )
+    );
+  };
+
+  const getBarcodePageSizeMm = () => {
+    const preset = activeBarcodePreset;
+    const isGa2408tPreset = isGa2408tLayout();
+    const isVertical = preset.orientation === "vertical";
+    return {
+      width: isGa2408tPreset
+        ? (isVertical ? 25 : 102)
+        : preset.stickerWidthMm * preset.columns + preset.columnGapMm * Math.max(0, preset.columns - 1) + preset.marginLeftMm + preset.marginRightMm,
+      height: isGa2408tPreset
+        ? (isVertical ? 102 : 25)
+        : Math.min(
+        preset.maxRollLengthMm,
+        preset.stickerHeightMm * preset.rows + preset.rowGapMm * Math.max(0, preset.rows - 1) + preset.marginTopMm + preset.marginBottomMm
+      ),
+    };
   };
 
   const buildBarcodePrintHtml = (target: BarcodeTarget) => {
     const preset = activeBarcodePreset;
     const totalCopies = Math.max(1, Number(barcodeCopies || 1));
     const cellsPerPage = Math.max(1, preset.columns * preset.rows);
-    const barcodeSvg = makeBarcodeSvg(target.barcode);
     const leastPrice = Number(target.least_price || 0);
+    const isGa2408tPreset = isGa2408tLayout();
+    const isVertical = preset.orientation === "vertical";
+    const barcodeImage = makeBarcodeImage(target.barcode, isGa2408tPreset ? false : preset.showBarcodeText);
+    const { width: pageWidthMm, height: pageHeightMm } = getBarcodePageSizeMm();
+    const businessName = escapeHtml(settings.businessName || "");
+    const businessAddress = escapeHtml(settings.address || "");
+    const businessPhone = escapeHtml(settings.phone || "");
+    const targetName = escapeHtml(target.name);
+    const barcodeText = escapeHtml(target.barcode);
+    const priceText = escapeHtml(formatCurrency(target.price, settings.currency));
+    const leastPriceText = escapeHtml(leastPrice ? formatCurrency(leastPrice, settings.currency) : "-");
+    const codeText = escapeHtml(target.least_price_code || target.sku || "");
     const label = `
       <div class="label">
-        ${preset.showBusinessName ? `<div class="business strong">${settings.businessName || ""}</div>` : ""}
-        ${preset.showBusinessAddress ? `<div class="business">${settings.address || ""}</div>` : ""}
-        ${preset.showBusinessPhone ? `<div class="business">${settings.phone || ""}</div>` : ""}
-        ${preset.showProductName ? `<div class="product">${target.name}</div>` : ""}
-        <div class="barcode">${barcodeSvg}</div>
-        ${preset.showSellingPrice ? `<div class="price">Price: ${formatCurrency(target.price, settings.currency)}</div>` : ""}
-        ${preset.showLeastPrice ? `<div class="least">Least: ${leastPrice ? formatCurrency(leastPrice, settings.currency) : "-"}</div>` : ""}
-        ${preset.showLeastPriceCode ? `<div class="code">${target.least_price_code || target.sku || ""}</div>` : ""}
+        ${preset.showBusinessName ? `<div class="business strong">${businessName}</div>` : ""}
+        ${preset.showBusinessAddress ? `<div class="business">${businessAddress}</div>` : ""}
+        ${preset.showBusinessPhone ? `<div class="business">${businessPhone}</div>` : ""}
+        ${preset.showProductName ? `<div class="product">${targetName}</div>` : ""}
+        <div class="barcode">${barcodeImage}</div>
+        ${preset.showBarcodeText ? `<div class="barcode-text">${barcodeText}</div>` : ""}
+        ${preset.showSellingPrice ? `<div class="price">Price: ${priceText}</div>` : ""}
+        ${preset.showLeastPrice ? `<div class="least">Least: ${leastPriceText}</div>` : ""}
+        ${preset.showLeastPriceCode ? `<div class="code">${codeText}</div>` : ""}
       </div>
     `;
     const pages: string[] = [];
@@ -446,18 +515,208 @@ export default function ProductsPage() {
     }
 
     return `<!doctype html><html><head><meta charset="utf-8" /><style>
-      @page { size: ${preset.stickerWidthMm * preset.columns + preset.columnGapMm * Math.max(0, preset.columns - 1) + preset.marginLeftMm + preset.marginRightMm}mm ${Math.min(preset.maxRollLengthMm, preset.stickerHeightMm * preset.rows + preset.rowGapMm * Math.max(0, preset.rows - 1) + preset.marginTopMm + preset.marginBottomMm)}mm; margin: 0; }
-      body { margin: 0; font-family: Arial, sans-serif; color: #111; }
-      .sheet { box-sizing: border-box; width: ${preset.stickerWidthMm * preset.columns + preset.columnGapMm * Math.max(0, preset.columns - 1) + preset.marginLeftMm + preset.marginRightMm}mm; min-height: ${Math.min(preset.maxRollLengthMm, preset.stickerHeightMm * preset.rows + preset.rowGapMm * Math.max(0, preset.rows - 1) + preset.marginTopMm + preset.marginBottomMm)}mm; padding: ${preset.marginTopMm}mm ${preset.marginRightMm}mm ${preset.marginBottomMm}mm ${preset.marginLeftMm}mm; display: grid; grid-template-columns: repeat(${preset.columns}, ${preset.stickerWidthMm}mm); grid-auto-rows: ${preset.stickerHeightMm}mm; gap: ${preset.rowGapMm}mm ${preset.columnGapMm}mm; page-break-after: always; }
+      @page { size: ${pageWidthMm}mm ${pageHeightMm}mm; margin: 0; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; width: ${pageWidthMm}mm; }
+      body { font-family: Arial, Helvetica, sans-serif; color: #111; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .sheet { box-sizing: border-box; width: ${pageWidthMm}mm; min-height: ${pageHeightMm}mm; padding: ${preset.marginTopMm}mm ${preset.marginRightMm}mm ${preset.marginBottomMm}mm ${preset.marginLeftMm}mm; display: grid; grid-template-columns: repeat(${preset.columns}, ${preset.stickerWidthMm}mm); grid-auto-rows: ${preset.stickerHeightMm}mm; gap: ${preset.rowGapMm}mm ${preset.columnGapMm}mm; page-break-after: always; }
       .label { box-sizing: border-box; width: ${preset.stickerWidthMm}mm; height: ${preset.stickerHeightMm}mm; overflow: hidden; text-align: center; padding: 1mm; display: flex; flex-direction: column; justify-content: center; line-height: 1.05; }
       .business { font-size: ${preset.businessInfoFontSize}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .strong { font-weight: 700; }
       .product { font-size: ${preset.productNameFontSize}px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .barcode svg { max-width: 100%; height: ${preset.barcodeHeightMm}mm; }
+      .barcode img { max-width: 100%; height: ${preset.barcodeHeightMm}mm; display: block; }
+      .barcode-text { font-size: ${Math.max(6, preset.businessInfoFontSize)}px; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .price { font-size: ${preset.sellingPriceFontSize}px; font-weight: 700; }
       .least { font-size: ${preset.leastPriceFontSize}px; }
       .code { font-size: ${preset.leastPriceCodeFontSize}px; font-weight: 700; letter-spacing: 0; }
-    </style></head><body>${pages.join("")}</body></html>`;
+      ${isGa2408tPreset ? `
+      @page { size: ${isVertical ? "25mm 102mm" : "102mm 25mm"}; margin: 0; }
+      html, body { width: ${isVertical ? "25mm" : "102mm"}; height: auto; overflow: hidden; }
+      .sheet {
+        width: ${isVertical ? "25mm" : "102mm"};
+        min-height: ${isVertical ? "102mm" : "25mm"};
+        height: ${isVertical ? "102mm" : "25mm"};
+        padding: 0;
+        grid-template-columns: ${isVertical ? "25mm" : "repeat(3, 31.33mm)"};
+        grid-auto-rows: ${isVertical ? "31.33mm" : "25mm"};
+        gap: ${isVertical ? "4mm 0" : "0 4mm"};
+        align-content: start;
+        page-break-after: always;
+        break-after: page;
+      }
+      .label {
+        width: ${isVertical ? "25mm" : "31.33mm"};
+        height: ${isVertical ? "31.33mm" : "25mm"};
+        padding: 0.45mm 0.25mm 0.25mm;
+        justify-content: flex-start;
+        align-items: center;
+        line-height: 1;
+      }
+      .business {
+        width: 100%;
+        height: 2.15mm;
+        font-size: ${preset.businessInfoFontSize}px;
+        line-height: 2.15mm;
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .product {
+        width: 100%;
+        height: 2.25mm;
+        font-size: ${preset.productNameFontSize}px;
+        line-height: 2.25mm;
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .barcode {
+        width: 30.8mm;
+        height: 10.75mm;
+        margin: 0.35mm 0 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+      .barcode img {
+        width: 30.8mm;
+        max-width: 30.8mm;
+        height: 10.75mm;
+        display: block;
+      }
+      .barcode-text {
+        width: 100%;
+        height: 1.65mm;
+        font-size: 5.5px;
+        line-height: 1.65mm;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .price {
+        width: 100%;
+        height: 3.6mm;
+        font-size: ${preset.sellingPriceFontSize}px;
+        line-height: 3.6mm;
+        font-weight: 800;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .least {
+        width: 100%;
+        height: 2.4mm;
+        font-size: ${preset.leastPriceFontSize}px;
+        line-height: 2.4mm;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .code {
+        width: 100%;
+        height: 3.05mm;
+        font-size: ${preset.leastPriceCodeFontSize}px;
+        line-height: 3.05mm;
+        font-weight: 800;
+        letter-spacing: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      ` : ""}
+    </style></head><body class="${isGa2408tPreset ? "ga-2408t" : ""}">${pages.join("")}</body></html>`;
+  };
+
+  const makeBarcodeImageDataUrl = (value: string) => {
+    const canvas = document.createElement("canvas");
+    JsBarcode(canvas, value, {
+      format: "CODE128",
+      width: activeBarcodePreset.barcodeBarWidth,
+      height: activeBarcodePreset.barcodeHeightMm * 3.78,
+      displayValue: false,
+      margin: 0,
+    });
+    return canvas.toDataURL("image/png");
+  };
+
+  const buildGa2408tPdfBase64 = async (target: BarcodeTarget) => {
+    const { jsPDF } = await import("jspdf");
+    const preset = activeBarcodePreset;
+    const isVertical = preset.orientation === "vertical";
+    const pageFormat: [number, number] = isVertical ? [25, 102] : [102, 25];
+    const doc = new jsPDF({
+      orientation: isVertical ? "portrait" : "landscape",
+      unit: "mm",
+      format: pageFormat,
+      compress: true,
+    });
+    const totalCopies = Math.max(1, Number(barcodeCopies || 1));
+    const barcodeImage = makeBarcodeImageDataUrl(target.barcode);
+    const leastPrice = Number(target.least_price || 0);
+    const priceText = `Price: ${formatCurrency(target.price, settings.currency)}`;
+    const codeText = target.least_price_code || target.sku || "";
+    const labelWidth = isVertical ? 25 : 31.33;
+    const labelHeight = isVertical ? 31.33 : 25;
+    const gap = 4;
+    const labelsPerPage = 3;
+
+    const drawCenteredText = (text: string, x: number, y: number, width: number, fontSize: number, bold = false) => {
+      doc.setFont("helvetica", bold ? "bold" : "normal");
+      doc.setFontSize(fontSize);
+      const clipped = doc.splitTextToSize(text, width).join(" ");
+      const value = clipped.length > 34 ? `${clipped.slice(0, 31)}...` : clipped;
+      doc.text(value, x + width / 2, y, { align: "center", baseline: "middle", maxWidth: width });
+    };
+
+    for (let index = 0; index < totalCopies; index += labelsPerPage) {
+      if (index > 0) doc.addPage(pageFormat, isVertical ? "portrait" : "landscape");
+      const count = Math.min(labelsPerPage, totalCopies - index);
+
+      for (let cell = 0; cell < count; cell += 1) {
+        const x = isVertical ? 0 : cell * (labelWidth + gap);
+        const baseY = isVertical ? cell * (labelHeight + gap) : 0;
+        const contentX = x + 0.35;
+        const contentWidth = labelWidth - 0.7;
+        let y = baseY + 1.4;
+
+        if (preset.showBusinessName) {
+          drawCenteredText(settings.businessName || "", contentX, y, contentWidth, preset.businessInfoFontSize, true);
+          y += 2.3;
+        }
+
+        if (preset.showProductName) {
+          drawCenteredText(target.name, contentX, y, contentWidth, preset.productNameFontSize, true);
+          y += 2.6;
+        }
+
+        doc.addImage(barcodeImage, "PNG", x + 0.3, y, labelWidth - 0.6, Math.max(8, Math.min(11, preset.barcodeHeightMm)));
+        y += Math.max(8, Math.min(11, preset.barcodeHeightMm)) + 1.1;
+
+        if (preset.showBarcodeText) {
+          drawCenteredText(target.barcode, contentX, y, contentWidth, 5.5);
+          y += 2.1;
+        }
+
+        if (preset.showSellingPrice) {
+          drawCenteredText(priceText, contentX, y, contentWidth, preset.sellingPriceFontSize, true);
+          y += 3.7;
+        }
+
+        if (preset.showLeastPrice) {
+          drawCenteredText(leastPrice ? `Least: ${formatCurrency(leastPrice, settings.currency)}` : "Least: -", contentX, y, contentWidth, preset.leastPriceFontSize);
+          y += 2.4;
+        }
+
+        if (preset.showLeastPriceCode) {
+          drawCenteredText(codeText, contentX, y, contentWidth, preset.leastPriceCodeFontSize, true);
+        }
+      }
+    }
+
+    return doc.output("datauristring").split(",")[1];
   };
 
   const printBarcode = async () => {
@@ -468,11 +727,20 @@ export default function ProductsPage() {
       const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
       const printer = printers.find((item) => item.name === selectedPrinterName) || printers.find((item) => item.isDefault) || printers[0];
       const labelHtml = buildBarcodePrintHtml(barcodeTarget);
+      const pageSize = getBarcodePageSizeMm();
 
       if (bridge && printer) {
-        const result = await bridge.printBarcode(labelHtml, printer.name);
+        const result =
+          isGa2408tLayout() && bridge.printBarcodePdf
+            ? await bridge.printBarcodePdf(await buildGa2408tPdfBase64(barcodeTarget), printer.name)
+            : await bridge.printBarcode(labelHtml, printer.name, {
+                pageWidthMm: pageSize.width,
+                pageHeightMm: pageSize.height,
+              });
         if (!result.success) throw new Error(result.error || "Unable to print barcode");
-        toast.success(`Barcode sent to ${result.printerName || printer.displayName || printer.name}`);
+        toast.success(result.opened
+          ? `Barcode PDF opened for ${result.printerName || printer.displayName || printer.name}`
+          : `Barcode sent to ${result.printerName || printer.displayName || printer.name}`);
       } else if (typeof window.print === "function") {
         const printWindow = window.open("", "MSHPOSBarcodePrint", "width=640,height=480");
         if (!printWindow) throw new Error("Print popup was blocked");
@@ -489,6 +757,38 @@ export default function ProductsPage() {
       toast.error(error instanceof Error ? error.message : "Unable to print barcode");
     } finally {
       setPrintingBarcode(false);
+    }
+  };
+
+  const previewBarcodePdf = async () => {
+    if (!barcodeTarget) return;
+
+    setPreviewingBarcodePdf(true);
+    try {
+      if (!isGa2408tLayout()) {
+        const printWindow = window.open("", "MSHPOSBarcodePreview", "width=900,height=520");
+        if (!printWindow) throw new Error("Preview popup was blocked");
+        printWindow.document.open();
+        printWindow.document.write(buildBarcodePrintHtml(barcodeTarget));
+        printWindow.document.close();
+        return;
+      }
+
+      const pdfBase64 = await buildGa2408tPdfBase64(barcodeTarget);
+      const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
+
+      if (bridge?.previewBarcodePdf) {
+        const result = await bridge.previewBarcodePdf(pdfBase64);
+        if (!result.success) throw new Error(result.error || "Unable to open barcode PDF preview");
+      } else {
+        const previewWindow = window.open(`data:application/pdf;base64,${pdfBase64}`, "MSHPOSBarcodePdfPreview");
+        if (!previewWindow) throw new Error("Preview popup was blocked");
+      }
+    } catch (error) {
+      console.error("Unable to preview barcode PDF:", error);
+      toast.error(error instanceof Error ? error.message : "Unable to preview barcode PDF");
+    } finally {
+      setPreviewingBarcodePdf(false);
     }
   };
 
@@ -1087,6 +1387,14 @@ export default function ProductsPage() {
                 className="btn-primary mt-4 w-full disabled:opacity-50"
               >
                 {printingBarcode ? "Printing..." : "Print Barcode"}
+              </button>
+
+              <button
+                onClick={previewBarcodePdf}
+                disabled={previewingBarcodePdf}
+                className="btn-secondary mt-3 w-full disabled:opacity-50"
+              >
+                {previewingBarcodePdf ? "Opening Preview..." : "Open PDF Preview"}
               </button>
 
               <button

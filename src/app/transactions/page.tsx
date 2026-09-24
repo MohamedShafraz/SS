@@ -17,6 +17,10 @@ interface TransactionItem {
   unit_price: number;
   discount: number;
   subtotal: number;
+  products?: {
+    name: string;
+    image_url?: string;
+  } | null;
   product?: {
     name: string;
   };
@@ -28,6 +32,8 @@ interface Transaction {
   total_amount: number;
   discount_amount: number;
   tax_amount: number;
+  amount_paid?: number | null;
+  balance_amount?: number | null;
   payment_method: string;
   is_replacement_transaction?: boolean | null;
   original_return_id?: string | null;
@@ -41,6 +47,7 @@ export default function TransactionsPage() {
   const [selectedTransaction, setSelectedTransaction] =
     useState<Transaction | null>(null);
   const [currency, setCurrency] = useState(DEFAULT_CURRENCY);
+  const [receiptSettings, setReceiptSettings] = useState<Partial<BusinessProfile>>({});
 
   const fetchTransactions = useCallback(async (isActive: () => boolean = () => true) => {
     try {
@@ -67,6 +74,8 @@ export default function TransactionsPage() {
             total_amount: transaction.total_amount,
             discount_amount: transaction.discount_amount ?? 0,
             tax_amount: transaction.tax_amount ?? 0,
+            amount_paid: transaction.amount_paid ?? 0,
+            balance_amount: transaction.balance_amount ?? 0,
             payment_method: transaction.payment_method,
             is_replacement_transaction: transaction.is_replacement_transaction ?? false,
             original_return_id: transaction.original_return_id ?? null,
@@ -101,13 +110,17 @@ export default function TransactionsPage() {
       .then((response) => response.json())
       .then((result) => {
         const settings = result.settings as Partial<BusinessProfile> | null;
-        if (active && settings?.currency) setCurrency(settings.currency);
+        if (active && settings) {
+          setReceiptSettings(settings);
+          if (settings.currency) setCurrency(settings.currency);
+        }
       })
       .catch(() => {
         const stored = localStorage.getItem("posSettings");
         if (!stored) return;
         try {
           const settings = JSON.parse(stored) as Partial<BusinessProfile>;
+          setReceiptSettings(settings);
           if (settings.currency) setCurrency(settings.currency);
         } catch {
           // Keep default currency if stored settings cannot be parsed.
@@ -122,12 +135,124 @@ export default function TransactionsPage() {
   const filteredTransactions = transactions;
   const isManagerDayScope = user?.role === "manager";
 
-  const handlePrintReceipt = (transaction: Transaction) => {
-    toast.success(`Receipt for ${transaction.id} printed!`);
+  const receiptFooterText = () => {
+    if (receiptSettings.showReceiptFooter === false) return "";
+    const days = Math.max(1, Number(receiptSettings.receiptFooterDays || 7));
+    if (receiptSettings.receiptFooterMode === "valid_days") {
+      return `This bill is valid for ${days} day${days === 1 ? "" : "s"}.`;
+    }
+    if (receiptSettings.receiptFooterMode === "custom") {
+      return receiptSettings.receiptFooterText || "";
+    }
+    return `Return allowed within ${days} day${days === 1 ? "" : "s"}.`;
   };
 
-  const handleDownloadReceipt = (transaction: Transaction) => {
-    toast.success(`Receipt for ${transaction.id} downloaded!`);
+  const loadTransactionDetails = async (transaction: Transaction) => {
+    if (transaction.items?.length) return transaction;
+
+    const { data, error } = await supabase
+      .from("transaction_items")
+      .select("*,products")
+      .eq("transaction_id", transaction.id);
+
+    if (error) {
+      toast.error("Failed to load receipt items");
+      return transaction;
+    }
+
+    return {
+      ...transaction,
+      items: (data || []) as TransactionItem[],
+    };
+  };
+
+  const buildReceiptHtml = (transaction: Transaction) => {
+    const items = transaction.items || [];
+    const subtotal = transaction.total_amount - transaction.tax_amount + transaction.discount_amount;
+    const footer = receiptFooterText();
+    const showBusinessInfo = receiptSettings.showReceiptBusinessInfo !== false;
+    const width = receiptSettings.receiptPaperWidth === "58mm" ? "58mm" : "80mm";
+    const rows = items.map((item) => {
+      const name = item.products?.name || item.product?.name || item.product_id;
+      return `
+        <div class="line item">
+          <div>
+            <strong>${name}</strong>
+            <div class="muted">${item.quantity} x ${formatCurrency(item.unit_price, currency)}</div>
+          </div>
+          <div>${formatCurrency(item.subtotal, currency)}</div>
+        </div>
+      `;
+    }).join("");
+
+    return `<!doctype html><html><head><meta charset="utf-8" /><title>Receipt ${transaction.id}</title><style>
+      @page { size: ${width} auto; margin: 4mm; }
+      body { width: ${width}; margin: 0 auto; font-family: Arial, sans-serif; color: #111827; font-size: 12px; }
+      .receipt { padding: 8px; }
+      .center { text-align: center; }
+      .logo { max-width: 44mm; max-height: 18mm; object-fit: contain; margin-bottom: 4px; }
+      .title { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+      .muted { color: #4b5563; font-size: 11px; }
+      .divider { border-top: 1px dashed #9ca3af; margin: 8px 0; }
+      .line { display: flex; justify-content: space-between; gap: 8px; }
+      .item { margin: 8px 0; }
+      .total { font-size: 16px; font-weight: 700; }
+    </style></head><body><div class="receipt">
+      ${showBusinessInfo ? `<div class="center">
+        ${receiptSettings.logoImage ? `<img class="logo" src="${receiptSettings.logoImage}" alt="Logo" />` : ""}
+        <div class="title">${receiptSettings.businessName || "MSHPOS"}</div>
+        <div class="muted">${receiptSettings.address || ""}</div>
+        <div class="muted">${receiptSettings.phone || ""}</div>
+      </div><div class="divider"></div>` : ""}
+      <div class="line"><span>Transaction</span><span>${transaction.id}</span></div>
+      <div class="line"><span>Date</span><span>${new Date(transaction.transaction_date).toLocaleString()}</span></div>
+      <div class="line"><span>Payment</span><span>${transaction.payment_method}</span></div>
+      ${transaction.amount_paid ? `<div class="line"><span>Received</span><span>${formatCurrency(transaction.amount_paid, currency)}</span></div>` : ""}
+      ${transaction.balance_amount ? `<div class="line"><span>Balance</span><span>${formatCurrency(transaction.balance_amount, currency)}</span></div>` : ""}
+      <div class="divider"></div>
+      ${rows || `<div class="center muted">No item rows found</div>`}
+      <div class="divider"></div>
+      <div class="line"><span>Subtotal</span><span>${formatCurrency(subtotal, currency)}</span></div>
+      <div class="line"><span>Discount</span><span>${formatCurrency(transaction.discount_amount, currency)}</span></div>
+      <div class="line"><span>Tax</span><span>${formatCurrency(transaction.tax_amount, currency)}</span></div>
+      <div class="line total"><span>Total</span><span>${formatCurrency(transaction.total_amount, currency)}</span></div>
+      <div class="divider"></div>
+      ${footer ? `<div class="center muted">${footer}</div>` : ""}
+      <div class="center muted">Thank you</div>
+    </div></body></html>`;
+  };
+
+  const handleSelectTransaction = async (transaction: Transaction) => {
+    const detailed = await loadTransactionDetails(transaction);
+    setSelectedTransaction(detailed);
+  };
+
+  const handlePrintReceipt = async (transaction: Transaction) => {
+    const detailed = await loadTransactionDetails(transaction);
+    const printWindow = window.open("", "MSHPOSReceiptPrint", "width=420,height=680");
+    if (!printWindow) {
+      toast.error("Print popup was blocked");
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(buildReceiptHtml(detailed));
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  const handleDownloadReceipt = async (transaction: Transaction) => {
+    const detailed = await loadTransactionDetails(transaction);
+    const blob = new Blob([buildReceiptHtml(detailed)], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `receipt-${transaction.id}.html`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Receipt downloaded");
   };
 
   const totalSales = filteredTransactions.reduce((sum, txn) => sum + txn.total_amount, 0);
@@ -261,7 +386,7 @@ export default function TransactionsPage() {
                       <td className="px-6 py-4">
                         <div className="flex gap-2">
                           <button
-                            onClick={() => setSelectedTransaction(transaction)}
+                            onClick={() => handleSelectTransaction(transaction)}
                             className="p-2 text-blue-600 hover:bg-blue-100 rounded transition-colors"
                             title="View Details"
                           >
@@ -330,7 +455,7 @@ export default function TransactionsPage() {
                   <tbody>
                     {selectedTransaction.items?.map((item, idx) => (
                       <tr key={idx} className="border-b border-gray-200">
-                        <td className="py-2">{item.product_id || "Product"}</td>
+                        <td className="py-2">{item.products?.name || item.product?.name || item.product_id || "Product"}</td>
                         <td className="text-center py-2">{item.quantity}</td>
                         <td className="text-right py-2">{formatCurrency(item.unit_price, currency)}</td>
                         <td className="text-right py-2">
@@ -381,6 +506,22 @@ export default function TransactionsPage() {
                     {selectedTransaction.payment_method}
                   </span>
                 </p>
+                {selectedTransaction.amount_paid ? (
+                  <p className="text-sm text-gray-600 mt-2">
+                    Amount Paid:{" "}
+                    <span className="font-semibold text-gray-900">
+                      {formatCurrency(selectedTransaction.amount_paid, currency)}
+                    </span>
+                  </p>
+                ) : null}
+                {selectedTransaction.balance_amount ? (
+                  <p className="text-sm text-gray-600 mt-2">
+                    Balance:{" "}
+                    <span className="font-semibold text-gray-900">
+                      {formatCurrency(selectedTransaction.balance_amount, currency)}
+                    </span>
+                  </p>
+                ) : null}
               </div>
 
               {/* Action Buttons */}

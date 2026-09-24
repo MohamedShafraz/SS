@@ -87,6 +87,17 @@ export default function SettingsPage() {
 
   const activeBarcodePreset = getActiveBarcodePreset(settings);
   const barcodePresets = getBarcodePresets(settings);
+  const isGa2408tPreset =
+    activeBarcodePreset.id === "builtin-ga-2408t-102mm-3up-25mm" ||
+    (
+      activeBarcodePreset.columns === 3 &&
+      activeBarcodePreset.rows === 1 &&
+      Math.abs(Number(activeBarcodePreset.stickerHeightMm) - 25) <= 0.5 &&
+      Math.abs(Number(activeBarcodePreset.columnGapMm) - 4) <= 0.5 &&
+      Math.abs(Number(activeBarcodePreset.marginLeftMm)) <= 0.5 &&
+      Math.abs(Number(activeBarcodePreset.marginRightMm)) <= 0.5
+    );
+  const isVerticalBarcodePreset = activeBarcodePreset.orientation === "vertical";
 
   const updateActiveBarcodePreset = (updates: Partial<BarcodeStickerPreset>) => {
     const current = normalizeBarcodePreset({ ...activeBarcodePreset, ...updates });
@@ -674,6 +685,17 @@ export default function SettingsPage() {
                     className="input-base"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 mb-2">Orientation</label>
+                  <select
+                    value={activeBarcodePreset.orientation || "horizontal"}
+                    onChange={(e) => updateActiveBarcodePreset({ orientation: e.target.value as BarcodeStickerPreset["orientation"] })}
+                    className="input-base"
+                  >
+                    <option value="horizontal">Horizontal</option>
+                    <option value="vertical">Vertical</option>
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -740,9 +762,14 @@ export default function SettingsPage() {
               <div
                 className="grid bg-white border border-dashed border-gray-300"
                 style={{
-                  gridTemplateColumns: `repeat(${activeBarcodePreset.columns}, ${Math.min(140, activeBarcodePreset.stickerWidthMm * 2.1)}px)`,
-                  gap: `${Math.max(4, activeBarcodePreset.rowGapMm * 2)}px ${Math.max(4, activeBarcodePreset.columnGapMm * 2)}px`,
-                  padding: `${Math.max(6, activeBarcodePreset.marginTopMm * 2)}px`,
+                  gridTemplateColumns: isGa2408tPreset
+                    ? (isVerticalBarcodePreset ? "75px" : "repeat(3, 94px)")
+                    : `repeat(${activeBarcodePreset.columns}, ${Math.min(140, activeBarcodePreset.stickerWidthMm * 2.1)}px)`,
+                  gap: isGa2408tPreset
+                    ? (isVerticalBarcodePreset ? "12px 0" : "0 12px")
+                    : `${Math.max(4, activeBarcodePreset.rowGapMm * 2)}px ${Math.max(4, activeBarcodePreset.columnGapMm * 2)}px`,
+                  padding: isGa2408tPreset ? 0 : `${Math.max(6, activeBarcodePreset.marginTopMm * 2)}px`,
+                  width: isGa2408tPreset ? (isVerticalBarcodePreset ? "75px" : "318px") : undefined,
                 }}
               >
                 {Array.from({ length: Math.min(12, activeBarcodePreset.columns * activeBarcodePreset.rows) }).map((_, index) => (
@@ -750,15 +777,18 @@ export default function SettingsPage() {
                     key={index}
                     className="border border-gray-300 bg-white text-center overflow-hidden flex flex-col justify-center"
                     style={{
-                      width: `${Math.min(140, activeBarcodePreset.stickerWidthMm * 2.1)}px`,
-                      height: `${Math.min(110, activeBarcodePreset.stickerHeightMm * 2.1)}px`,
+                      width: isGa2408tPreset ? (isVerticalBarcodePreset ? "75px" : "94px") : `${Math.min(140, activeBarcodePreset.stickerWidthMm * 2.1)}px`,
+                      height: isGa2408tPreset ? (isVerticalBarcodePreset ? "94px" : "75px") : `${Math.min(110, activeBarcodePreset.stickerHeightMm * 2.1)}px`,
+                      padding: isGa2408tPreset ? "2px 1px" : undefined,
+                      justifyContent: isGa2408tPreset ? "flex-start" : undefined,
                     }}
                   >
-                    {activeBarcodePreset.showBusinessName && <div style={{ fontSize: activeBarcodePreset.businessInfoFontSize }}>Business</div>}
-                    {activeBarcodePreset.showProductName && <div className="font-semibold truncate" style={{ fontSize: activeBarcodePreset.productNameFontSize }}>Product Name</div>}
-                    <div className="mx-auto my-1 h-6 w-24 bg-gray-900" />
-                    {activeBarcodePreset.showSellingPrice && <div className="font-bold" style={{ fontSize: activeBarcodePreset.sellingPriceFontSize }}>Price 1250</div>}
-                    {activeBarcodePreset.showLeastPriceCode && <div className="font-bold" style={{ fontSize: activeBarcodePreset.leastPriceCodeFontSize }}>LP-001</div>}
+                    {activeBarcodePreset.showBusinessName && <div className="w-full truncate font-bold" style={{ fontSize: activeBarcodePreset.businessInfoFontSize }}>GOODE</div>}
+                    {activeBarcodePreset.showProductName && <div className="w-full font-semibold truncate" style={{ fontSize: activeBarcodePreset.productNameFontSize }}>Sample Product</div>}
+                    <div className="mx-auto my-1 bg-gray-900" style={{ width: isGa2408tPreset ? "88px" : "96px", height: isGa2408tPreset ? "28px" : "24px" }} />
+                    {activeBarcodePreset.showBarcodeText && <div className="w-full truncate" style={{ fontSize: isGa2408tPreset ? 6 : activeBarcodePreset.businessInfoFontSize }}>BCD-1789800117556</div>}
+                    {activeBarcodePreset.showSellingPrice && <div className="w-full truncate font-bold" style={{ fontSize: activeBarcodePreset.sellingPriceFontSize }}>Price: 1,800</div>}
+                    {activeBarcodePreset.showLeastPriceCode && <div className="w-full truncate font-bold" style={{ fontSize: activeBarcodePreset.leastPriceCodeFontSize }}>BM6</div>}
                   </div>
                 ))}
               </div>

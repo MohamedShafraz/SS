@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { fork, spawn } = require("child_process");
 const path = require("path");
 const net = require("net");
@@ -17,14 +17,35 @@ ipcMain.handle("hardware:list-printers", async () => {
   }));
 });
 
-ipcMain.handle("hardware:print-barcode", async (_event, { html, printerName }) => {
+ipcMain.handle("hardware:print-barcode", async (_event, { html, printerName, options = {} }) => {
   if (!mainWindow || mainWindow.isDestroyed() || typeof html !== "string" || !html.trim()) {
     return { success: false, error: "Printing is unavailable" };
   }
 
-  const printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+  const pageWidthMm = Number(options.pageWidthMm || 102);
+  const pageHeightMm = Number(options.pageHeightMm || 25);
+  const pxPerMm = 3.78;
+  const printWindow = new BrowserWindow({
+    show: false,
+    width: Math.max(320, Math.ceil(pageWidthMm * pxPerMm)),
+    height: Math.max(160, Math.ceil(pageHeightMm * pxPerMm)),
+    webPreferences: {
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
   try {
     await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    await printWindow.webContents.executeJavaScript(`
+      new Promise((resolve) => {
+        const afterPaint = () => requestAnimationFrame(() => requestAnimationFrame(resolve));
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(afterPaint).catch(afterPaint);
+        } else {
+          afterPaint();
+        }
+      });
+    `);
     const printers = await mainWindow.webContents.getPrintersAsync();
     const printer = printers.find((item) => item.name === printerName) ||
       printers.find((item) => item.isDefault) || printers[0];
@@ -33,7 +54,12 @@ ipcMain.handle("hardware:print-barcode", async (_event, { html, printerName }) =
 
     await new Promise((resolve, reject) => {
       printWindow.webContents.print(
-        { silent: true, deviceName: printer.name, printBackground: true },
+        {
+          silent: true,
+          deviceName: printer.name,
+          printBackground: true,
+          margins: { marginType: "none" },
+        },
         (success, failureReason) => {
           if (success) resolve();
           else reject(new Error(failureReason || "The printer rejected the job"));
@@ -47,6 +73,83 @@ ipcMain.handle("hardware:print-barcode", async (_event, { html, printerName }) =
     return { success: false, error: error.message || "Unable to print barcode" };
   } finally {
     if (!printWindow.isDestroyed()) printWindow.close();
+  }
+});
+
+function writeBarcodePdfTemp(pdfBase64) {
+  const tempDir = path.join(app.getPath("temp"), "mshpos-barcode");
+  fs.mkdirSync(tempDir, { recursive: true });
+  const pdfPath = path.join(tempDir, `barcode-${Date.now()}.pdf`);
+  fs.writeFileSync(pdfPath, Buffer.from(pdfBase64, "base64"));
+  return pdfPath;
+}
+
+ipcMain.handle("hardware:preview-barcode-pdf", async (_event, { pdfBase64 }) => {
+  if (typeof pdfBase64 !== "string" || !pdfBase64.trim()) {
+    return { success: false, error: "PDF preview is unavailable" };
+  }
+
+  try {
+    const pdfPath = writeBarcodePdfTemp(pdfBase64);
+    const error = await shell.openPath(pdfPath);
+    if (error) return { success: false, error };
+    return { success: true };
+  } catch (error) {
+    console.error("Unable to preview barcode PDF:", error);
+    return { success: false, error: error.message || "Unable to preview barcode PDF" };
+  }
+});
+
+ipcMain.handle("hardware:print-barcode-pdf", async (_event, { pdfBase64, printerName }) => {
+  if (!mainWindow || mainWindow.isDestroyed() || typeof pdfBase64 !== "string" || !pdfBase64.trim()) {
+    return { success: false, error: "PDF printing is unavailable" };
+  }
+
+  try {
+    const printers = await mainWindow.webContents.getPrintersAsync();
+    const printer = printers.find((item) => item.name === printerName) ||
+      printers.find((item) => item.isDefault) || printers[0];
+
+    if (!printer) return { success: false, error: "No printer is connected" };
+
+    const pdfPath = writeBarcodePdfTemp(pdfBase64);
+
+    const ps = [
+      "$ErrorActionPreference = 'Stop'",
+      `$file = ${JSON.stringify(pdfPath)}`,
+      `$printer = ${JSON.stringify(printer.name)}`,
+      "Start-Process -FilePath $file -Verb PrintTo -ArgumentList $printer -WindowStyle Hidden",
+    ].join("; ");
+
+    const result = await new Promise((resolve) => {
+      const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps], {
+        windowsHide: true,
+      });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", (error) => resolve({ ok: false, error: error.message }));
+      child.on("close", (code) => {
+        resolve({ ok: code === 0, error: stderr.trim() });
+      });
+    });
+
+    if (!result.ok) {
+      await shell.openPath(pdfPath);
+      dialog.showMessageBox(mainWindow, {
+        type: "warning",
+        title: "Barcode PDF ready",
+        message: "The app created the barcode PDF, but Windows could not send it directly to the printer.",
+        detail: "Adobe can print this file manually. Please open it and print at 100% scale.",
+      });
+      return { success: true, printerName: printer.displayName || printer.name, opened: true };
+    }
+
+    return { success: true, printerName: printer.displayName || printer.name };
+  } catch (error) {
+    console.error("Unable to print barcode PDF:", error);
+    return { success: false, error: error.message || "Unable to print barcode PDF" };
   }
 });
 

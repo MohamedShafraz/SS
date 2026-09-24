@@ -170,6 +170,8 @@ export const addProductVariant = async (
   price_adjustment: number = 0,
   least_price: number = 0,
   least_price_code?: string,
+  variant_type_2?: string,
+  variant_value_2?: string,
   imageUrl?: string
 ): Promise<ProductVariant | null> => {
   try {
@@ -180,6 +182,8 @@ export const addProductVariant = async (
           product_id: productId,
           variant_type,
           variant_value,
+          variant_type_2: variant_type_2 || null,
+          variant_value_2: variant_value_2 || null,
           sku,
           barcode,
           quantity,
@@ -197,6 +201,51 @@ export const addProductVariant = async (
   } catch (error) {
     console.error("Error adding variant:", error);
     return null;
+  }
+};
+
+export const updateProductVariant = async (
+  variantId: string,
+  values: Partial<Pick<
+    ProductVariant,
+    | "variant_type"
+    | "variant_value"
+    | "variant_type_2"
+    | "variant_value_2"
+    | "quantity"
+    | "price_adjustment"
+    | "least_price"
+    | "least_price_code"
+    | "image_url"
+  >>
+): Promise<boolean> => {
+  try {
+    const { error } = await supabase
+      .from("product_variants")
+      .update({
+        ...values,
+        variant_type_2: values.variant_type_2 || null,
+        variant_value_2: values.variant_value_2 || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", variantId);
+
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    console.error("Error updating variant:", error);
+    return false;
+  }
+};
+
+export const deleteProductVariant = async (variantId: string): Promise<boolean> => {
+  try {
+    const { error } = await supabase.from("product_variants").delete().eq("id", variantId);
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    console.error("Error deleting variant:", error);
+    return false;
   }
 };
 

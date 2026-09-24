@@ -67,6 +67,7 @@ export interface BarcodeStickerPreset {
   marginBottomMm: number;
   barcodeHeightMm: number;
   barcodeBarWidth: number;
+  orientation?: "horizontal" | "vertical";
   productNameFontSize: number;
   sellingPriceFontSize: number;
   leastPriceFontSize: number;
@@ -162,6 +163,8 @@ export interface ProductVariant {
   product_id: string;
   variant_type: string;              // 'size', 'color', etc.
   variant_value: string;             // 'M', 'Red', 'Large', etc.
+  variant_type_2?: string | null;     // Optional second attribute, e.g., 'color'
+  variant_value_2?: string | null;    // Optional second value, e.g., 'Red'
   sku: string;
   barcode: string;
   quantity: number;
@@ -264,6 +267,8 @@ export interface ProductVariantRow {
   product_id: string;
   variant_type: string;
   variant_value: string;
+  variant_type_2: string | null;
+  variant_value_2: string | null;
   sku: string;
   barcode: string;
   quantity: number;
