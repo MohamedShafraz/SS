@@ -78,6 +78,8 @@ export default function ProductsPage() {
     currency: DEFAULT_CURRENCY,
     businessType: "Retail",
     barcodePrefix: "BCD",
+    barcodeUsePrefix: true,
+    barcodeDigitLength: 13,
     industryMode: "general",
     receiptLayout: "standard",
     receiptPaperWidth: "80mm",
@@ -126,9 +128,24 @@ export default function ProductsPage() {
   }, []);
 
   const createBarcodeValue = useCallback(() => {
-    const prefix = settings.barcodePrefix?.trim() || "BCD";
-    return `${prefix}-${Date.now()}`;
-  }, [settings.barcodePrefix]);
+    const digitLength = Math.max(1, Math.min(18, Number(settings.barcodeDigitLength || 13)));
+    const modulus = 10n ** BigInt(digitLength);
+    const existing = new Set(products.map((product) => product.barcode));
+    let numericValue = BigInt(Date.now()) % modulus;
+
+    for (let attempt = 0; attempt < Number(modulus > 1000n ? 1000n : modulus); attempt += 1) {
+      const digits = numericValue.toString().padStart(digitLength, "0").slice(-digitLength);
+      const prefix = settings.barcodePrefix?.trim() || "BCD";
+      const barcode = settings.barcodeUsePrefix === false ? digits : `${prefix}-${digits}`;
+      if (!existing.has(barcode)) return barcode;
+      numericValue = (numericValue + 1n) % modulus;
+    }
+
+    const fallbackDigits = String(Date.now()).slice(-digitLength).padStart(digitLength, "0");
+    return settings.barcodeUsePrefix === false
+      ? fallbackDigits
+      : `${settings.barcodePrefix?.trim() || "BCD"}-${fallbackDigits}`;
+  }, [products, settings.barcodeDigitLength, settings.barcodePrefix, settings.barcodeUsePrefix]);
 
   useEffect(() => {
     if (!showForm || !barcodePreviewRef.current) return;
@@ -495,11 +512,19 @@ export default function ProductsPage() {
     const priceText = escapeHtml(formatCurrency(target.price, settings.currency));
     const leastPriceText = escapeHtml(leastPrice ? formatCurrency(leastPrice, settings.currency) : "-");
     const codeText = escapeHtml(target.least_price_code || target.sku || "");
+    const hasExtraBusinessInfo = Boolean(preset.showBusinessAddress || preset.showBusinessPhone);
+    const businessAddressFontSize = preset.businessAddressFontSize || Math.max(5, preset.businessInfoFontSize - 1);
+    const businessPhoneFontSize = preset.businessPhoneFontSize || Math.max(5, preset.businessInfoFontSize - 1);
+    const gaBusinessLineHeightMm = hasExtraBusinessInfo ? 1.55 : 2.15;
+    const gaProductLineHeightMm = hasExtraBusinessInfo ? 1.85 : 2.25;
+    const gaBarcodeHeightMm = hasExtraBusinessInfo ? 7.7 : 10.75;
+    const gaPriceHeightMm = hasExtraBusinessInfo ? 2.65 : 3.6;
+    const gaCodeHeightMm = hasExtraBusinessInfo ? 2.35 : 3.05;
     const label = `
       <div class="label">
         ${preset.showBusinessName ? `<div class="business strong">${businessName}</div>` : ""}
-        ${preset.showBusinessAddress ? `<div class="business">${businessAddress}</div>` : ""}
-        ${preset.showBusinessPhone ? `<div class="business">${businessPhone}</div>` : ""}
+        ${preset.showBusinessAddress ? `<div class="business address">${businessAddress}</div>` : ""}
+        ${preset.showBusinessPhone ? `<div class="business phone">${businessPhone}</div>` : ""}
         ${preset.showProductName ? `<div class="product">${targetName}</div>` : ""}
         <div class="barcode">${barcodeImage}</div>
         ${preset.showBarcodeText ? `<div class="barcode-text">${barcodeText}</div>` : ""}
@@ -522,6 +547,8 @@ export default function ProductsPage() {
       .sheet { box-sizing: border-box; width: ${pageWidthMm}mm; min-height: ${pageHeightMm}mm; padding: ${preset.marginTopMm}mm ${preset.marginRightMm}mm ${preset.marginBottomMm}mm ${preset.marginLeftMm}mm; display: grid; grid-template-columns: repeat(${preset.columns}, ${preset.stickerWidthMm}mm); grid-auto-rows: ${preset.stickerHeightMm}mm; gap: ${preset.rowGapMm}mm ${preset.columnGapMm}mm; page-break-after: always; }
       .label { box-sizing: border-box; width: ${preset.stickerWidthMm}mm; height: ${preset.stickerHeightMm}mm; overflow: hidden; text-align: center; padding: 1mm; display: flex; flex-direction: column; justify-content: center; line-height: 1.05; }
       .business { font-size: ${preset.businessInfoFontSize}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .address { font-size: ${businessAddressFontSize}px; }
+      .phone { font-size: ${businessPhoneFontSize}px; }
       .strong { font-weight: 700; }
       .product { font-size: ${preset.productNameFontSize}px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .barcode img { max-width: 100%; height: ${preset.barcodeHeightMm}mm; display: block; }
@@ -554,19 +581,27 @@ export default function ProductsPage() {
       }
       .business {
         width: 100%;
-        height: 2.15mm;
+        height: ${gaBusinessLineHeightMm}mm;
         font-size: ${preset.businessInfoFontSize}px;
-        line-height: 2.15mm;
+        line-height: ${gaBusinessLineHeightMm}mm;
         font-weight: 700;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      .address {
+        font-size: ${businessAddressFontSize}px;
+        font-weight: 400;
+      }
+      .phone {
+        font-size: ${businessPhoneFontSize}px;
+        font-weight: 400;
+      }
       .product {
         width: 100%;
-        height: 2.25mm;
+        height: ${gaProductLineHeightMm}mm;
         font-size: ${preset.productNameFontSize}px;
-        line-height: 2.25mm;
+        line-height: ${gaProductLineHeightMm}mm;
         font-weight: 700;
         white-space: nowrap;
         overflow: hidden;
@@ -574,7 +609,7 @@ export default function ProductsPage() {
       }
       .barcode {
         width: 30.8mm;
-        height: 10.75mm;
+        height: ${gaBarcodeHeightMm}mm;
         margin: 0.35mm 0 0;
         display: flex;
         align-items: center;
@@ -584,7 +619,7 @@ export default function ProductsPage() {
       .barcode img {
         width: 30.8mm;
         max-width: 30.8mm;
-        height: 10.75mm;
+        height: ${gaBarcodeHeightMm}mm;
         display: block;
       }
       .barcode-text {
@@ -598,9 +633,9 @@ export default function ProductsPage() {
       }
       .price {
         width: 100%;
-        height: 3.6mm;
+        height: ${gaPriceHeightMm}mm;
         font-size: ${preset.sellingPriceFontSize}px;
-        line-height: 3.6mm;
+        line-height: ${gaPriceHeightMm}mm;
         font-weight: 800;
         white-space: nowrap;
         overflow: hidden;
@@ -617,9 +652,9 @@ export default function ProductsPage() {
       }
       .code {
         width: 100%;
-        height: 3.05mm;
+        height: ${gaCodeHeightMm}mm;
         font-size: ${preset.leastPriceCodeFontSize}px;
-        line-height: 3.05mm;
+        line-height: ${gaCodeHeightMm}mm;
         font-weight: 800;
         letter-spacing: 0;
         white-space: nowrap;
@@ -658,6 +693,17 @@ export default function ProductsPage() {
     const leastPrice = Number(target.least_price || 0);
     const priceText = `Price: ${formatCurrency(target.price, settings.currency)}`;
     const codeText = target.least_price_code || target.sku || "";
+    const businessAddress = settings.address || "";
+    const businessPhone = settings.phone || "";
+    const hasExtraBusinessInfo = Boolean(preset.showBusinessAddress || preset.showBusinessPhone);
+    const businessAddressFontSize = preset.businessAddressFontSize || Math.max(5, preset.businessInfoFontSize - 1);
+    const businessPhoneFontSize = preset.businessPhoneFontSize || Math.max(5, preset.businessInfoFontSize - 1);
+    const businessStep = hasExtraBusinessInfo ? 1.65 : 2.3;
+    const productStep = hasExtraBusinessInfo ? 2.0 : 2.6;
+    const barcodeHeight = hasExtraBusinessInfo ? 7.7 : Math.max(8, Math.min(11, preset.barcodeHeightMm));
+    const barcodeBottomGap = hasExtraBusinessInfo ? 0.65 : 1.1;
+    const priceStep = hasExtraBusinessInfo ? 2.75 : 3.7;
+    const codeFontSize = hasExtraBusinessInfo ? Math.max(7, preset.leastPriceCodeFontSize - 2) : preset.leastPriceCodeFontSize;
     const labelWidth = isVertical ? 25 : 31.33;
     const labelHeight = isVertical ? 31.33 : 25;
     const gap = 4;
@@ -684,16 +730,26 @@ export default function ProductsPage() {
 
         if (preset.showBusinessName) {
           drawCenteredText(settings.businessName || "", contentX, y, contentWidth, preset.businessInfoFontSize, true);
-          y += 2.3;
+          y += businessStep;
+        }
+
+        if (preset.showBusinessAddress) {
+          drawCenteredText(businessAddress, contentX, y, contentWidth, businessAddressFontSize);
+          y += businessStep;
+        }
+
+        if (preset.showBusinessPhone) {
+          drawCenteredText(businessPhone, contentX, y, contentWidth, businessPhoneFontSize);
+          y += businessStep;
         }
 
         if (preset.showProductName) {
           drawCenteredText(target.name, contentX, y, contentWidth, preset.productNameFontSize, true);
-          y += 2.6;
+          y += productStep;
         }
 
-        doc.addImage(barcodeImage, "PNG", x + 0.3, y, labelWidth - 0.6, Math.max(8, Math.min(11, preset.barcodeHeightMm)));
-        y += Math.max(8, Math.min(11, preset.barcodeHeightMm)) + 1.1;
+        doc.addImage(barcodeImage, "PNG", x + 0.3, y, labelWidth - 0.6, barcodeHeight);
+        y += barcodeHeight + barcodeBottomGap;
 
         if (preset.showBarcodeText) {
           drawCenteredText(target.barcode, contentX, y, contentWidth, 5.5);
@@ -702,7 +758,7 @@ export default function ProductsPage() {
 
         if (preset.showSellingPrice) {
           drawCenteredText(priceText, contentX, y, contentWidth, preset.sellingPriceFontSize, true);
-          y += 3.7;
+          y += priceStep;
         }
 
         if (preset.showLeastPrice) {
@@ -711,7 +767,7 @@ export default function ProductsPage() {
         }
 
         if (preset.showLeastPriceCode) {
-          drawCenteredText(codeText, contentX, y, contentWidth, preset.leastPriceCodeFontSize, true);
+          drawCenteredText(codeText, contentX, y, contentWidth, codeFontSize, true);
         }
       }
     }

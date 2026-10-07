@@ -33,6 +33,8 @@ export default function SettingsPage() {
     currency: DEFAULT_CURRENCY,
     businessType: "Retail",
     barcodePrefix: "BCD",
+    barcodeUsePrefix: true,
+    barcodeDigitLength: 13,
     industryMode: "general",
     receiptLayout: "standard",
     receiptPaperWidth: "80mm",
@@ -513,6 +515,41 @@ export default function SettingsPage() {
                   maxLength={10}
                 />
               </div>
+
+              <label className="flex items-center gap-3 rounded-lg bg-gray-50 p-3 text-sm font-medium text-gray-900">
+                <input
+                  type="checkbox"
+                  checked={settings.barcodeUsePrefix !== false}
+                  onChange={(e) =>
+                    handleSettingChange("barcodeUsePrefix", e.target.checked)
+                  }
+                  className="w-5 h-5"
+                />
+                Use prefix and dash on generated barcodes
+              </label>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">
+                  Generated Barcode Digits
+                </label>
+                <input
+                  type="number"
+                  value={settings.barcodeDigitLength || 13}
+                  onChange={(e) =>
+                    handleSettingChange(
+                      "barcodeDigitLength",
+                      Math.max(1, Math.min(18, Number(e.target.value) || 13))
+                    )
+                  }
+                  className="input-base"
+                  min="1"
+                  max="18"
+                  step="1"
+                />
+                <p className="text-xs text-gray-600 mt-1">
+                  Use 5 or 6 for small numeric-only stickers.
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -717,7 +754,9 @@ export default function SettingsPage() {
                   ["Price Font", "sellingPriceFontSize"],
                   ["Least Font", "leastPriceFontSize"],
                   ["Code Font", "leastPriceCodeFontSize"],
-                  ["Business Font", "businessInfoFontSize"],
+                  ["Business Name Font", "businessInfoFontSize"],
+                  ["Address Font", "businessAddressFontSize"],
+                  ["Phone Font", "businessPhoneFontSize"],
                 ].map(([label, key]) => (
                   <label key={key} className="block text-sm font-medium text-gray-900">
                     {label}
@@ -784,8 +823,10 @@ export default function SettingsPage() {
                     }}
                   >
                     {activeBarcodePreset.showBusinessName && <div className="w-full truncate font-bold" style={{ fontSize: activeBarcodePreset.businessInfoFontSize }}>GOODE</div>}
+                    {activeBarcodePreset.showBusinessAddress && <div className="w-full truncate" style={{ fontSize: activeBarcodePreset.businessAddressFontSize || Math.max(5, activeBarcodePreset.businessInfoFontSize - 1) }}>123 Main Street</div>}
+                    {activeBarcodePreset.showBusinessPhone && <div className="w-full truncate" style={{ fontSize: activeBarcodePreset.businessPhoneFontSize || Math.max(5, activeBarcodePreset.businessInfoFontSize - 1) }}>+94 77 712 3456</div>}
                     {activeBarcodePreset.showProductName && <div className="w-full font-semibold truncate" style={{ fontSize: activeBarcodePreset.productNameFontSize }}>Sample Product</div>}
-                    <div className="mx-auto my-1 bg-gray-900" style={{ width: isGa2408tPreset ? "88px" : "96px", height: isGa2408tPreset ? "28px" : "24px" }} />
+                    <div className="mx-auto my-1 bg-gray-900" style={{ width: isGa2408tPreset ? "88px" : "96px", height: isGa2408tPreset && (activeBarcodePreset.showBusinessAddress || activeBarcodePreset.showBusinessPhone) ? "20px" : isGa2408tPreset ? "28px" : "24px" }} />
                     {activeBarcodePreset.showBarcodeText && <div className="w-full truncate" style={{ fontSize: isGa2408tPreset ? 6 : activeBarcodePreset.businessInfoFontSize }}>BCD-1789800117556</div>}
                     {activeBarcodePreset.showSellingPrice && <div className="w-full truncate font-bold" style={{ fontSize: activeBarcodePreset.sellingPriceFontSize }}>Price: 1,800</div>}
                     {activeBarcodePreset.showLeastPriceCode && <div className="w-full truncate font-bold" style={{ fontSize: activeBarcodePreset.leastPriceCodeFontSize }}>BM6</div>}

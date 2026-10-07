@@ -37,6 +37,8 @@ export interface BusinessProfile {
   currency: string;
   businessType: string;
   barcodePrefix: string;
+  barcodeUsePrefix?: boolean;
+  barcodeDigitLength?: number;
   industryMode: IndustryMode;
   receiptLayout?: "compact" | "standard" | "detailed";
   receiptPaperWidth?: "58mm" | "80mm";
@@ -73,6 +75,8 @@ export interface BarcodeStickerPreset {
   leastPriceFontSize: number;
   leastPriceCodeFontSize: number;
   businessInfoFontSize: number;
+  businessAddressFontSize?: number;
+  businessPhoneFontSize?: number;
   showProductName: boolean;
   showSellingPrice: boolean;
   showLeastPrice: boolean;

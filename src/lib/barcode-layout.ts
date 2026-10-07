@@ -24,14 +24,16 @@ export const BUILT_IN_BARCODE_PRESETS: BarcodeStickerPreset[] = [
     leastPriceFontSize: 8,
     leastPriceCodeFontSize: 12,
     businessInfoFontSize: 7,
+    businessAddressFontSize: 6,
+    businessPhoneFontSize: 6,
     showProductName: true,
     showSellingPrice: true,
     showLeastPrice: false,
     showLeastPriceCode: true,
     showBarcodeText: true,
     showBusinessName: true,
-    showBusinessAddress: false,
-    showBusinessPhone: false,
+    showBusinessAddress: true,
+    showBusinessPhone: true,
   },
   {
     id: "builtin-2-column-compact",
@@ -56,6 +58,8 @@ export const BUILT_IN_BARCODE_PRESETS: BarcodeStickerPreset[] = [
     leastPriceFontSize: 9,
     leastPriceCodeFontSize: 11,
     businessInfoFontSize: 7,
+    businessAddressFontSize: 6,
+    businessPhoneFontSize: 6,
     showProductName: true,
     showSellingPrice: true,
     showLeastPrice: true,
@@ -88,6 +92,8 @@ export const BUILT_IN_BARCODE_PRESETS: BarcodeStickerPreset[] = [
     leastPriceFontSize: 9,
     leastPriceCodeFontSize: 11,
     businessInfoFontSize: 7,
+    businessAddressFontSize: 6,
+    businessPhoneFontSize: 6,
     showProductName: true,
     showSellingPrice: true,
     showLeastPrice: true,
@@ -120,6 +126,8 @@ export const BUILT_IN_BARCODE_PRESETS: BarcodeStickerPreset[] = [
     leastPriceFontSize: 11,
     leastPriceCodeFontSize: 13,
     businessInfoFontSize: 8,
+    businessAddressFontSize: 7,
+    businessPhoneFontSize: 7,
     showProductName: true,
     showSellingPrice: true,
     showLeastPrice: true,
@@ -134,7 +142,9 @@ export const BUILT_IN_BARCODE_PRESETS: BarcodeStickerPreset[] = [
 export function getBarcodePresets(settings: Partial<BusinessProfile> | null | undefined) {
   return [
     ...BUILT_IN_BARCODE_PRESETS,
-    ...((settings?.barcodeStickerCustomPresets || []).map((preset) => ({ ...preset, builtIn: false }))),
+    ...((settings?.barcodeStickerCustomPresets || []).map((preset) =>
+      normalizeBarcodePreset({ ...preset, builtIn: false })
+    )),
   ];
 }
 
@@ -159,6 +169,9 @@ export function normalizeBarcodePreset(value: BarcodeStickerPreset): BarcodeStic
     rowGapMm: Math.max(0, Number(value.rowGapMm || 0)),
     barcodeHeightMm: Math.max(5, Number(value.barcodeHeightMm || 10)),
     barcodeBarWidth: Math.max(0.8, Number(value.barcodeBarWidth || 1.3)),
+    businessInfoFontSize: Math.max(4, Number(value.businessInfoFontSize || 7)),
+    businessAddressFontSize: Math.max(4, Number(value.businessAddressFontSize || Math.max(5, Number(value.businessInfoFontSize || 7) - 1))),
+    businessPhoneFontSize: Math.max(4, Number(value.businessPhoneFontSize || Math.max(5, Number(value.businessInfoFontSize || 7) - 1))),
     orientation: value.orientation === "vertical" ? "vertical" : "horizontal",
   };
 }
