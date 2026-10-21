@@ -53,11 +53,43 @@ async function kvCommand<T>(segments: string[]) {
   return body?.result ?? null;
 }
 
-export async function getActivationRecord(licenseKey: string) {
-  const value = await kvCommand<string | null>(["get", recordKey(licenseKey)]);
+function parseRecord(value: string | null) {
   if (!value) return null;
 
   return JSON.parse(value) as ActivationRecord;
+}
+
+export async function getActivationRecord(licenseKey: string) {
+  const value = await kvCommand<string | null>(["get", recordKey(licenseKey)]);
+
+  return parseRecord(value);
+}
+
+export async function listActivationRecords(input: {
+  query?: string;
+  status?: ActivationRecord["status"] | "all";
+  limit?: number;
+} = {}) {
+  const query = input.query?.trim().toLowerCase() || "";
+  const status = input.status || "all";
+  const limit = Math.min(Math.max(input.limit || 100, 1), 500);
+  const keys = (await kvCommand<string[]>(["keys", `${KEY_PREFIX}*`])) || [];
+  const records = (
+    await Promise.all(keys.map((key) => kvCommand<string | null>(["get", key]).then(parseRecord)))
+  )
+    .filter((record): record is ActivationRecord => Boolean(record))
+    .filter((record) => status === "all" || record.status === status)
+    .filter((record) => {
+      if (!query) return true;
+
+      return [record.clientName, record.licenseKey, record.licenseId]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    })
+    .sort((first, second) => second.updatedAt.localeCompare(first.updatedAt));
+
+  return records.slice(0, limit);
 }
 
 export async function saveActivationRecord(record: ActivationRecord) {

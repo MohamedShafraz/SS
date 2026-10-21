@@ -4,9 +4,10 @@ import { MainLayout } from "@/components/layout";
 import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
 import { supabase } from "@/lib/supabase";
 import type { BusinessProfile } from "@/types";
-import { Plus, Truck } from "lucide-react";
+import { Edit3, Plus, Trash2, Truck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
+import { useAuth } from "@/lib/auth-context";
 
 interface Supplier {
   id: string;
@@ -20,7 +21,10 @@ interface Supplier {
 }
 
 export default function SuppliersPage() {
+  const { user } = useAuth();
+  const canMaintain = user?.role === "admin" || user?.role === "manager";
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [currency, setCurrency] = useState(DEFAULT_CURRENCY);
   const [form, setForm] = useState({
     name: "",
@@ -62,23 +66,37 @@ export default function SuppliersPage() {
     const paid = Number(form.paid_amount || 0);
     const due = Math.max(0, total - paid);
     const status = due <= 0 && total > 0 ? "paid" : paid > 0 ? "partial" : "unpaid";
-    const { data, error } = await supabase
-      .from("suppliers")
-      .insert([{ ...form, due_amount: due, payment_status: status }])
-      .select();
+    const query = editingId
+      ? supabase.from("suppliers").maintenance().update({ ...form, due_amount: due, payment_status: status })
+      : supabase.from("suppliers").insert([{ ...form, due_amount: due, payment_status: status }]).select();
+    if (editingId) query.eq("id", editingId);
+    const { data, error } = await query;
     if (error) {
       toast.error("Failed to save supplier");
       return;
     }
-    const supplier = (data || [])[0] as Supplier | undefined;
-    if (supplier && paid > 0) {
+    const supplier = ((data || []) as Supplier[])[0];
+    if (!editingId && supplier && paid > 0) {
       await supabase.from("supplier_payments").insert([
         { supplier_id: supplier.id, payment_date: new Date().toISOString(), amount: paid, notes: "Initial payment" },
       ]);
     }
     setForm({ name: "", phone: "", products: "", total_amount: 0, paid_amount: 0 });
-    toast.success("Supplier saved");
+    setEditingId(null);
+    toast.success(editingId ? "Supplier updated" : "Supplier saved");
     fetchSuppliers();
+  };
+
+  const editSupplier = (supplier: Supplier) => {
+    setEditingId(supplier.id);
+    setForm({ name: supplier.name, phone: supplier.phone || "", products: supplier.products || "", total_amount: Number(supplier.total_amount || 0), paid_amount: Number(supplier.paid_amount || 0) });
+  };
+
+  const deleteSupplier = async (id: string) => {
+    if (!window.confirm("Delete this supplier? Payment history will also be removed.")) return;
+    const { error } = await supabase.from("suppliers").maintenance().delete().eq("id", id);
+    if (error) toast.error(error.message || "Failed to delete supplier");
+    else { toast.success("Supplier deleted"); fetchSuppliers(); }
   };
 
   return (
@@ -97,8 +115,9 @@ export default function SuppliersPage() {
           <input type="number" min={0} value={form.paid_amount || ""} onChange={(e) => setForm({ ...form, paid_amount: Number(e.target.value) || 0 })} className="input-base" placeholder="Paid amount" />
           <button onClick={saveSupplier} className="btn-success flex items-center justify-center gap-2">
             <Plus className="w-4 h-4" />
-            Save Supplier
+            {editingId ? "Update Supplier" : "Save Supplier"}
           </button>
+          {editingId && <button onClick={() => { setEditingId(null); setForm({ name: "", phone: "", products: "", total_amount: 0, paid_amount: 0 }); }} className="btn-secondary">Cancel</button>}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -120,6 +139,10 @@ export default function SuppliersPage() {
                 }`}>
                   {supplier.payment_status}
                 </span>
+                {canMaintain && <div className="flex gap-2">
+                  <button type="button" onClick={() => editSupplier(supplier)} className="text-blue-600" title="Edit supplier"><Edit3 className="w-4 h-4" /></button>
+                  <button type="button" onClick={() => deleteSupplier(supplier.id)} className="text-red-600" title="Delete supplier"><Trash2 className="w-4 h-4" /></button>
+                </div>}
               </div>
               <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
                 <div><p className="text-gray-500">Total</p><p className="font-semibold">{formatCurrency(supplier.total_amount, currency)}</p></div>
@@ -133,4 +156,3 @@ export default function SuppliersPage() {
     </MainLayout>
   );
 }
-

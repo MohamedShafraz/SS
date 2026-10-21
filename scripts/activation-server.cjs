@@ -31,6 +31,20 @@ function writeRecords(records) {
   fs.writeFileSync(recordsPath, JSON.stringify(records, null, 2));
 }
 
+function publicRecord(record) {
+  return {
+    licenseId: record.licenseId,
+    licenseKey: record.licenseKey,
+    clientName: record.clientName,
+    status: record.status,
+    activated: Boolean(record.machineFingerprintHash),
+    activatedAt: record.activatedAt,
+    expiresAt: record.expiresAt || null,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
+
 function canonicalLicensePayload(payload) {
   return JSON.stringify({
     schemaVersion: payload.schemaVersion,
@@ -89,6 +103,26 @@ function issueLicense() {
   console.log(`Issued license: ${licenseKey}`);
   console.log(`Client: ${clientName}`);
   console.log(`Records: ${recordsPath}`);
+}
+
+function listLicenses() {
+  const status = arg("status", "all");
+  const query = arg("q").trim().toLowerCase();
+  const records = readRecords();
+  const licenses = records.licenses
+    .filter((license) => status === "all" || license.status === status)
+    .filter((license) => {
+      if (!query) return true;
+
+      return [license.clientName, license.licenseKey, license.licenseId]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    })
+    .sort((first, second) => String(second.updatedAt).localeCompare(String(first.updatedAt)))
+    .map(publicRecord);
+
+  console.log(JSON.stringify({ clients: licenses }, null, 2));
 }
 
 function readJson(request) {
@@ -169,9 +203,42 @@ if (process.argv.includes("--issue")) {
   process.exit(0);
 }
 
+if (process.argv.includes("--list")) {
+  listLicenses();
+  process.exit(0);
+}
+
 const server = http.createServer((request, response) => {
   if (request.method === "GET" && request.url === "/health") {
     return send(response, 200, { ok: true });
+  }
+
+  if (request.method === "GET" && request.url.startsWith("/clients")) {
+    const token = process.env.ACTIVATION_ADMIN_TOKEN;
+    const isAuthorized = !token || request.headers.authorization === `Bearer ${token}`;
+
+    if (!isAuthorized) {
+      return send(response, 401, { message: "Unauthorized" });
+    }
+
+    const requestUrl = new URL(request.url, `http://${request.headers.host || "localhost"}`);
+    const status = requestUrl.searchParams.get("status") || "all";
+    const query = (requestUrl.searchParams.get("q") || "").trim().toLowerCase();
+    const records = readRecords();
+    const clients = records.licenses
+      .filter((license) => status === "all" || license.status === status)
+      .filter((license) => {
+        if (!query) return true;
+
+        return [license.clientName, license.licenseKey, license.licenseId]
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+      })
+      .sort((first, second) => String(second.updatedAt).localeCompare(String(first.updatedAt)))
+      .map(publicRecord);
+
+    return send(response, 200, { clients });
   }
 
   if (request.method === "POST" && request.url === "/activate") {
@@ -188,5 +255,6 @@ const server = http.createServer((request, response) => {
 server.listen(port, () => {
   console.log(`Activation server listening on http://localhost:${port}`);
   console.log(`Activation endpoint: http://localhost:${port}/activate`);
+  console.log(`Client tracking endpoint: http://localhost:${port}/clients`);
   console.log(`Records: ${recordsPath}`);
 });

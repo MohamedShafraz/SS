@@ -37,6 +37,8 @@ Your activation URL will be:
 https://your-vercel-domain.vercel.app/api/activation/activate
 ```
 
+Make sure this activation endpoint is publicly reachable. Do not put the activation deployment behind Vercel Deployment Protection, password protection, or SSO. The protected admin endpoints (`/api/activation/issue` and `/api/activation/clients`) are secured with `ACTIVATION_ADMIN_TOKEN`, but `/api/activation/activate` must accept client POST requests from installed offline POS apps.
+
 ## 3. Issue A Client License
 
 Call the protected Vercel endpoint from PowerShell:
@@ -55,7 +57,34 @@ Invoke-RestMethod `
   -Body $body
 ```
 
-## 4. Write The Client Build Config
+## 4. Track Issued Client Licenses
+
+Call the protected tracking endpoint to see which clients have received keys and whether those keys are activated:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "https://your-vercel-domain.vercel.app/api/activation/clients?status=all&limit=100" `
+  -Method Get `
+  -Headers @{ Authorization = "Bearer your random admin token" }
+```
+
+Optional query parameters:
+
+```text
+q=GOOD
+status=issued | active | disabled | all
+limit=100
+```
+
+The response includes `clientName`, `licenseKey`, `status`, `activated`, `activatedAt`, `expiresAt`, `createdAt`, and `updatedAt`.
+
+For the local test server, you can also run:
+
+```powershell
+npm.cmd run license:list -- --status=all
+```
+
+## 5. Write The Client Build Config
 
 On the build machine before packaging:
 
@@ -67,7 +96,7 @@ npm.cmd run write-license-config
 
 This creates `client-build/license-config.json`. It contains only client-safe values.
 
-## 5. Build The Client Installer
+## 6. Build The Client Installer
 
 ```powershell
 npm.cmd run register-client -- --fresh --company="GOOD CHOICE" --license=OFFLINE-GOODCHOICE-001

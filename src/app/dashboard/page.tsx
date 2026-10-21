@@ -22,6 +22,8 @@ import {
   TrendingDown,
   Package,
   ShoppingCart,
+  CreditCard,
+  ReceiptText,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { AuthContext } from "@/lib/auth-context";
@@ -40,8 +42,18 @@ export default function Dashboard() {
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [transactionItems, setTransactionItems] = useState<any[]>([]);
+  const [expenses, setExpenses] = useState<any[]>([]);
+  const [shopPayments, setShopPayments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [currency, setCurrency] = useState(DEFAULT_CURRENCY);
+  const [shopDashboardSettings, setShopDashboardSettings] = useState({
+    shopBillingEnabled: false,
+    shopDashboardReceivablesEnabled: true,
+    shopDashboardPartialBillsEnabled: true,
+    shopDashboardUnpaidBillsEnabled: true,
+    shopDashboardFollowupPaymentsEnabled: true,
+    shopDashboardFollowupTableEnabled: true,
+  });
 
   const isManagerDayScope = authContext?.user?.role === "manager";
 
@@ -53,6 +65,16 @@ export default function Dashboard() {
       .then((result) => {
         const settings = result.settings as Partial<BusinessProfile> | null;
         if (active && settings?.currency) setCurrency(settings.currency);
+        if (active) {
+          setShopDashboardSettings({
+            shopBillingEnabled: settings?.shopBillingEnabled === true,
+            shopDashboardReceivablesEnabled: settings?.shopDashboardReceivablesEnabled !== false,
+            shopDashboardPartialBillsEnabled: settings?.shopDashboardPartialBillsEnabled !== false,
+            shopDashboardUnpaidBillsEnabled: settings?.shopDashboardUnpaidBillsEnabled !== false,
+            shopDashboardFollowupPaymentsEnabled: settings?.shopDashboardFollowupPaymentsEnabled !== false,
+            shopDashboardFollowupTableEnabled: settings?.shopDashboardFollowupTableEnabled !== false,
+          });
+        }
       })
       .catch(() => {
         const stored = localStorage.getItem("posSettings");
@@ -60,6 +82,14 @@ export default function Dashboard() {
         try {
           const settings = JSON.parse(stored) as Partial<BusinessProfile>;
           if (settings.currency) setCurrency(settings.currency);
+          setShopDashboardSettings({
+            shopBillingEnabled: settings.shopBillingEnabled === true,
+            shopDashboardReceivablesEnabled: settings.shopDashboardReceivablesEnabled !== false,
+            shopDashboardPartialBillsEnabled: settings.shopDashboardPartialBillsEnabled !== false,
+            shopDashboardUnpaidBillsEnabled: settings.shopDashboardUnpaidBillsEnabled !== false,
+            shopDashboardFollowupPaymentsEnabled: settings.shopDashboardFollowupPaymentsEnabled !== false,
+            shopDashboardFollowupTableEnabled: settings.shopDashboardFollowupTableEnabled !== false,
+          });
         } catch {
           // Keep default currency if stored settings cannot be parsed.
         }
@@ -143,6 +173,21 @@ export default function Dashboard() {
               setTransactionItems(itemsData || []);
             }
           }
+
+          const { data: expensesData, error: expensesError } = await supabase
+            .from("expenses")
+            .select("*");
+
+          if (!expensesError && active) {
+            setExpenses(expensesData || []);
+          }
+          const { data: shopPaymentsData, error: shopPaymentsError } = await supabase
+            .from("shop_payments")
+            .select("*");
+
+          if (!shopPaymentsError && active) {
+            setShopPayments(shopPaymentsData || []);
+          }
           return;
         }
 
@@ -197,6 +242,22 @@ export default function Dashboard() {
             setTransactionItems(itemsData || []);
           }
         }
+
+        const { data: expensesData, error: expensesError } = await supabase
+          .from("expenses")
+          .select("*");
+
+        if (!expensesError && active) {
+          setExpenses(expensesData || []);
+        }
+
+        const { data: shopPaymentsData, error: shopPaymentsError } = await supabase
+          .from("shop_payments")
+          .select("*");
+
+        if (!shopPaymentsError && active) {
+          setShopPayments(shopPaymentsData || []);
+        }
       } catch (error) {
         console.error("Error fetching dashboard data:", error);
       } finally {
@@ -213,16 +274,74 @@ export default function Dashboard() {
     };
   }, [authContext?.isAuthenticated]);
 
-  // Get filtered transaction items by category
+  const dateMatchesFilter = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return false;
+    const now = new Date();
+
+    switch (dateFilter) {
+      case "today":
+        return date.toDateString() === now.toDateString();
+      case "week": {
+        const weekStart = new Date(now);
+        weekStart.setHours(0, 0, 0, 0);
+        weekStart.setDate(now.getDate() - now.getDay());
+        return date >= weekStart && date <= now;
+      }
+      case "month":
+        return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+      case "year":
+        return date.getFullYear() === now.getFullYear();
+      default:
+        return true;
+    }
+  };
+
+  const dashboardDateKey = (value: string) => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toISOString().slice(0, 10);
+  };
+
+  const getItemProduct = (item: any) => {
+    const directProduct = products.find((product) => product.id === item.product_id);
+    if (directProduct) return directProduct;
+
+    const variant = variants.find((entry) => entry.id === item.variant_id);
+    return variant ? products.find((product) => product.id === variant.product_id) : null;
+  };
+
+  const scopedTransactions = () =>
+    transactions.filter((transaction) => dateMatchesFilter(transaction.transaction_date));
+
+  const isToday = (value: string) => {
+    const date = new Date(value);
+    return !Number.isNaN(date.getTime()) && date.toDateString() === new Date().toDateString();
+  };
+
+  const shopTransactions = transactions.filter(
+    (transaction) => transaction.sale_type === "shop" || transaction.shop_id
+  );
+  const activeShopBills = shopTransactions
+    .filter((transaction) => Number(transaction.due_amount || 0) > 0)
+    .sort((a, b) => new Date(a.transaction_date).getTime() - new Date(b.transaction_date).getTime());
+  const shopReceivables = activeShopBills.reduce(
+    (sum, transaction) => sum + Number(transaction.due_amount || 0),
+    0
+  );
+  const partialBillCount = activeShopBills.filter((transaction) => transaction.payment_status === "partial").length;
+  const unpaidBillCount = activeShopBills.filter((transaction) => transaction.payment_status === "unpaid").length;
+  const followUpPaymentsToday = shopPayments
+    .filter((payment) => isToday(payment.payment_date) && payment.notes !== "Initial payment")
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+
+  // Get filtered transaction items by date, product, and company.
   const getFilteredItems = () => {
-    const scopedTransactionIds = new Set(transactions.map((transaction) => transaction.id));
-    const scopedItems = isManagerDayScope
-      ? transactionItems.filter((item) => scopedTransactionIds.has(item.transaction_id))
-      : transactionItems;
+    const scopedTransactionIds = new Set(scopedTransactions().map((transaction) => transaction.id));
+    const scopedItems = transactionItems.filter((item) => scopedTransactionIds.has(item.transaction_id));
 
     return scopedItems.filter((item) => {
-      const product = products.find((p) => p.id === item.product_id);
-      const productMatches = productFilter === "all" || item.product_id === productFilter;
+      const product = getItemProduct(item);
+      const productMatches = productFilter === "all" || product?.id === productFilter;
       if (!productMatches) return false;
 
       const companyMatches = companyFilter === "all" || (product && (product.company_id || "") === companyFilter);
@@ -237,7 +356,15 @@ export default function Dashboard() {
     const filteredItems = getFilteredItems();
     
     // Calculate total sales from filtered items
-    const totalSales = filteredItems.reduce((sum, item) => sum + (item.subtotal || 0), 0);
+    const totalSales = filteredItems.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+    const costOfGoodsSold = filteredItems.reduce((sum, item) => {
+      const product = getItemProduct(item);
+      return sum + Number(product?.cost || 0) * Number(item.quantity || 0);
+    }, 0);
+    const totalExpenses = expenses
+      .filter((expense) => dateMatchesFilter(expense.expense_date))
+      .reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    const netProfit = totalSales - costOfGoodsSold - totalExpenses;
     
     // Calculate inventory value
     const inventoryValue = 
@@ -251,49 +378,22 @@ export default function Dashboard() {
             .filter((p) => p.id === productFilter)
             .reduce((sum, p) => sum + ((p.cost || 0) * (p.quantity || 0)), 0);
     
-    // Calculate profit from filtered transactions
-    let totalProfit = 0;
-    filteredItems.forEach((item) => {
-      // Calculate tax on item (5%)
-      const tax = item.subtotal * 0.05;
-      totalProfit += tax;
-    });
-    
-    const totalLoss = 0; // Can be calculated if cost tracking is needed
+    const totalLoss = netProfit < 0 ? Math.abs(netProfit) : 0;
 
     return {
       totalSales: Math.round(totalSales * 100) / 100,
-      totalProfit: Math.round(totalProfit * 100) / 100,
-      totalLoss,
+      totalProfit: Math.round(netProfit * 100) / 100,
+      totalLoss: Math.round(totalLoss * 100) / 100,
       inventoryValue: Math.round(inventoryValue * 100) / 100,
     };
   };
 
   // Generate sales chart data based on date filter and category filter
   const generateSalesData = () => {
-    const now = new Date();
     const filteredItems = getFilteredItems();
     
     // Map items to transactions and apply date filter
-    const filteredTransactions = transactions.filter((t) => {
-      const txDate = new Date(t.transaction_date);
-      
-      switch (dateFilter) {
-        case "today":
-          return txDate.toDateString() === now.toDateString();
-        case "week":
-          const weekStart = new Date(now);
-          weekStart.setDate(now.getDate() - now.getDay());
-          return txDate >= weekStart && txDate <= now;
-        case "month":
-          return txDate.getMonth() === now.getMonth() && 
-                 txDate.getFullYear() === now.getFullYear();
-        case "year":
-          return txDate.getFullYear() === now.getFullYear();
-        default:
-          return true;
-      }
-    });
+    const filteredTransactions = scopedTransactions();
 
     // Group by date and filter by category
     const groupedByDate = filteredTransactions.reduce((acc: any, t) => {
@@ -305,12 +405,18 @@ export default function Dashboard() {
       
       if (!hasFilteredItems) return acc;
       
-      const date = t.transaction_date;
+      const date = dashboardDateKey(t.transaction_date);
       if (!acc[date]) {
         acc[date] = { sales: 0, profit: 0, transactions: 0 };
       }
-      acc[date].sales += t.total_amount || 0;
-      acc[date].profit += t.tax_amount || 0;
+      const transactionItemsForDate = filteredItems.filter((item) => item.transaction_id === t.id);
+      const sales = transactionItemsForDate.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+      const cost = transactionItemsForDate.reduce((sum, item) => {
+        const product = getItemProduct(item);
+        return sum + Number(product?.cost || 0) * Number(item.quantity || 0);
+      }, 0);
+      acc[date].sales += sales;
+      acc[date].profit += sales - cost;
       acc[date].transactions += 1;
       return acc;
     }, {});
@@ -320,7 +426,13 @@ export default function Dashboard() {
       .map(([date, data]: [string, any]) => ({
         date,
         sales: Math.round(data.sales * 100) / 100,
-        profit: Math.round(data.profit * 100) / 100,
+        profit: Math.round(
+          (data.profit -
+            expenses
+              .filter((expense) => dashboardDateKey(expense.expense_date) === date)
+              .reduce((sum, expense) => sum + Number(expense.amount || 0), 0)) *
+            100
+        ) / 100,
       }))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   };
@@ -351,7 +463,7 @@ export default function Dashboard() {
     
 
     filteredItems.forEach((item) => {
-      const product = products.find((p) => p.id === item.product_id);
+      const product = getItemProduct(item);
       const productName = product?.name || "Product";
       const label = hasVariantSales
         ? getVariantLabel(item.variant_id, productName)
@@ -428,6 +540,44 @@ export default function Dashboard() {
       textColor: "text-purple-600",
     },
   ];
+
+  const shopMetrics = [
+    {
+      id: "shopDashboardReceivablesEnabled",
+      title: "Shop Receivables",
+      value: formatCurrency(shopReceivables, currency),
+      icon: ReceiptText,
+      color: "bg-red-100",
+      textColor: "text-red-600",
+    },
+    {
+      id: "shopDashboardPartialBillsEnabled",
+      title: "Partial Bills",
+      value: String(partialBillCount),
+      icon: CreditCard,
+      color: "bg-yellow-100",
+      textColor: "text-yellow-600",
+    },
+    {
+      id: "shopDashboardUnpaidBillsEnabled",
+      title: "Unpaid Bills",
+      value: String(unpaidBillCount),
+      icon: ReceiptText,
+      color: "bg-orange-100",
+      textColor: "text-orange-600",
+    },
+    {
+      id: "shopDashboardFollowupPaymentsEnabled",
+      title: "Follow-up Payments Today",
+      value: formatCurrency(followUpPaymentsToday, currency),
+      icon: TrendingUp,
+      color: "bg-green-100",
+      textColor: "text-green-600",
+    },
+  ];
+  const visibleShopMetrics = shopMetrics.filter((metric) =>
+    Boolean(shopDashboardSettings[metric.id as keyof typeof shopDashboardSettings])
+  );
 
   return (
     <MainLayout>
@@ -522,6 +672,69 @@ export default function Dashboard() {
               );
             })}
           </div>
+        )}
+
+        {shopDashboardSettings.shopBillingEnabled && !loading && (
+          <>
+            {visibleShopMetrics.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {visibleShopMetrics.map((metric) => {
+                const Icon = metric.icon;
+                return (
+                  <div key={metric.title} className="card">
+                    <div className={`mb-4 inline-flex p-3 rounded-lg ${metric.color}`}>
+                      <Icon className={`w-6 h-6 ${metric.textColor}`} />
+                    </div>
+                    <h3 className="text-gray-600 text-sm font-medium mb-1">{metric.title}</h3>
+                    <p className="text-2xl font-bold text-gray-900">{metric.value}</p>
+                  </div>
+                );
+              })}
+            </div>
+            )}
+
+            {shopDashboardSettings.shopDashboardFollowupTableEnabled && (
+            <div className="bg-white rounded-lg shadow-md overflow-hidden">
+              <div className="border-b p-5">
+                <h2 className="text-lg font-semibold text-gray-900">Shop Bills To Follow Up</h2>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      {["Shop", "Bill", "Date", "Total", "Paid", "Due", "Status"].map((heading) => (
+                        <th key={heading} className="px-4 py-3 text-left text-sm font-semibold text-gray-900">
+                          {heading}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {activeShopBills.slice(0, 8).length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-6 text-center text-gray-600">
+                          No unpaid or partial shop bills.
+                        </td>
+                      </tr>
+                    ) : (
+                      activeShopBills.slice(0, 8).map((bill) => (
+                        <tr key={bill.id}>
+                          <td className="px-4 py-3 font-medium text-gray-900">{bill.customer_name || "Shop"}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{bill.id}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{bill.transaction_date}</td>
+                          <td className="px-4 py-3">{formatCurrency(bill.total_amount, currency)}</td>
+                          <td className="px-4 py-3">{formatCurrency(bill.amount_paid || 0, currency)}</td>
+                          <td className="px-4 py-3 font-semibold text-red-600">{formatCurrency(bill.due_amount || 0, currency)}</td>
+                          <td className="px-4 py-3 capitalize">{bill.payment_status || "unpaid"}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            )}
+          </>
         )}
 
         {/* Charts */}

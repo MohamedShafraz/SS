@@ -11,6 +11,8 @@ import type {
   ReplacementItemRow,
   ReturnItemRow,
   ReturnRow,
+  ShopAccountRow,
+  ShopPaymentRow,
   TransactionItemRow,
   TransactionRow,
   UserRow,
@@ -25,6 +27,8 @@ type TableName =
   | "return_items"
   | "replacement_items"
   | "suppliers"
+  | "shop_accounts"
+  | "shop_payments"
   | "supplier_payments"
   | "expenses"
   | "companies"
@@ -62,6 +66,8 @@ const TABLES: TableName[] = [
   "return_items",
   "replacement_items",
   "suppliers",
+  "shop_accounts",
+  "shop_payments",
   "supplier_payments",
   "expenses",
   "companies",
@@ -119,6 +125,11 @@ const TABLE_COLUMNS: Record<TableName, string[]> = {
     "created_at",
     "is_replacement_transaction",
     "original_return_id",
+    "shop_id",
+    "customer_name",
+    "sale_type",
+    "payment_status",
+    "due_amount",
   ],
   transaction_items: [
     "id",
@@ -180,6 +191,29 @@ const TABLE_COLUMNS: Record<TableName, string[]> = {
     "supplier_id",
     "payment_date",
     "amount",
+    "notes",
+    "created_at",
+  ],
+  shop_accounts: [
+    "id",
+    "name",
+    "phone",
+    "address",
+    "notes",
+    "total_billed",
+    "total_paid",
+    "due_amount",
+    "payment_status",
+    "created_at",
+    "updated_at",
+  ],
+  shop_payments: [
+    "id",
+    "shop_id",
+    "transaction_id",
+    "payment_date",
+    "amount",
+    "payment_method",
     "notes",
     "created_at",
   ],
@@ -297,7 +331,10 @@ function normalizeRow(table: TableName, row: Record<string, unknown>) {
 }
 
 function getDb() {
-  if (connection) return connection;
+  if (connection) {
+    migrate(connection);
+    return connection;
+  }
 
   const file = dbPath();
   mkdirSync(dirname(file), { recursive: true });
@@ -361,7 +398,12 @@ function migrate(db: SqliteDb) {
       user_id TEXT,
       created_at TEXT NOT NULL,
       is_replacement_transaction INTEGER NOT NULL DEFAULT 0,
-      original_return_id TEXT
+      original_return_id TEXT,
+      shop_id TEXT,
+      customer_name TEXT,
+      sale_type TEXT DEFAULT 'walk_in',
+      payment_status TEXT DEFAULT 'paid',
+      due_amount REAL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS transaction_items (
@@ -427,6 +469,33 @@ function migrate(db: SqliteDb) {
       notes TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS shop_accounts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT,
+      address TEXT,
+      notes TEXT,
+      total_billed REAL NOT NULL DEFAULT 0,
+      total_paid REAL NOT NULL DEFAULT 0,
+      due_amount REAL NOT NULL DEFAULT 0,
+      payment_status TEXT NOT NULL DEFAULT 'unpaid',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS shop_payments (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      transaction_id TEXT NOT NULL,
+      payment_date TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      payment_method TEXT NOT NULL DEFAULT 'cash',
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (shop_id) REFERENCES shop_accounts(id) ON DELETE CASCADE,
+      FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS expenses (
@@ -514,6 +583,18 @@ function migrate(db: SqliteDb) {
   ensureColumn(db, "product_variants", "least_price_code", "TEXT DEFAULT ''");
   ensureColumn(db, "transactions", "amount_paid", "REAL DEFAULT 0");
   ensureColumn(db, "transactions", "balance_amount", "REAL DEFAULT 0");
+  ensureColumn(db, "transactions", "shop_id", "TEXT");
+  ensureColumn(db, "transactions", "customer_name", "TEXT");
+  ensureColumn(db, "transactions", "sale_type", "TEXT DEFAULT 'walk_in'");
+  ensureColumn(db, "transactions", "payment_status", "TEXT DEFAULT 'paid'");
+  ensureColumn(db, "transactions", "due_amount", "REAL DEFAULT 0");
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_transactions_shop ON transactions(shop_id);
+    CREATE INDEX IF NOT EXISTS idx_transactions_payment_status ON transactions(payment_status);
+    CREATE INDEX IF NOT EXISTS idx_shop_payments_shop ON shop_payments(shop_id);
+    CREATE INDEX IF NOT EXISTS idx_shop_payments_transaction ON shop_payments(transaction_id);
+  `);
 }
 
 function ensureColumn(db: SqliteDb, table: string, column: string, definition: string) {
@@ -601,6 +682,11 @@ function withDefaults(table: TableName, row: any) {
       user_id: row.user_id || null,
       is_replacement_transaction: Boolean(row.is_replacement_transaction),
       original_return_id: row.original_return_id || null,
+      shop_id: row.shop_id || null,
+      customer_name: row.customer_name || null,
+      sale_type: row.sale_type || (row.shop_id ? "shop" : "walk_in"),
+      payment_status: row.payment_status || (Number(row.due_amount || 0) > 0 ? "partial" : "paid"),
+      due_amount: row.due_amount == null ? 0 : Number(row.due_amount || 0),
     } satisfies TransactionRow;
   }
 
@@ -680,6 +766,36 @@ function withDefaults(table: TableName, row: any) {
       amount: Number(row.amount || 0),
       notes: row.notes || "",
     };
+  }
+
+  if (table === "shop_accounts") {
+    const total = Number(row.total_billed || 0);
+    const paid = Number(row.total_paid || 0);
+    const due = Math.max(0, Number(row.due_amount ?? total - paid));
+    return {
+      ...base,
+      name: row.name,
+      phone: row.phone || "",
+      address: row.address || "",
+      notes: row.notes || "",
+      total_billed: total,
+      total_paid: paid,
+      due_amount: due,
+      payment_status: row.payment_status || (due <= 0 && total > 0 ? "paid" : paid > 0 ? "partial" : "unpaid"),
+      updated_at: row.updated_at || timestamp,
+    } satisfies ShopAccountRow;
+  }
+
+  if (table === "shop_payments") {
+    return {
+      ...base,
+      shop_id: row.shop_id,
+      transaction_id: row.transaction_id,
+      payment_date: row.payment_date || timestamp,
+      amount: Number(row.amount || 0),
+      payment_method: row.payment_method || "cash",
+      notes: row.notes || "",
+    } satisfies ShopPaymentRow;
   }
 
   if (table === "expenses") {
@@ -873,6 +989,127 @@ export function deleteRows(table: TableName, filters: LocalFilter[] = []) {
   return { data: { deleted: result.changes }, error: null };
 }
 
+function refreshSupplierBalance(supplierId: string) {
+  const db = getDb();
+  const supplier = db.prepare("SELECT total_amount FROM suppliers WHERE id = @id").get({ id: supplierId }) as
+    | { total_amount?: number }
+    | undefined;
+  if (!supplier) return;
+  const payments = db.prepare("SELECT COALESCE(SUM(amount), 0) AS paid FROM supplier_payments WHERE supplier_id = @supplier_id")
+    .get({ supplier_id: supplierId }) as { paid?: number };
+  const total = Number(supplier.total_amount || 0);
+  const paid = Number(payments.paid || 0);
+  const due = Math.max(0, total - paid);
+  const status = due <= 0 && total > 0 ? "paid" : paid > 0 ? "partial" : "unpaid";
+  db.prepare("UPDATE suppliers SET paid_amount = @paid, due_amount = @due, payment_status = @status, updated_at = @updated_at WHERE id = @id")
+    .run({ id: supplierId, paid, due, status, updated_at: now() });
+}
+
+function refreshShopAccount(shopId: string) {
+  const db = getDb();
+  const shop = db.prepare("SELECT id FROM shop_accounts WHERE id = @id").get({ id: shopId });
+  if (!shop) return;
+  const billed = db.prepare("SELECT COALESCE(SUM(total_amount), 0) AS total FROM transactions WHERE shop_id = @shop_id AND status IS NOT 'cancelled'")
+    .get({ shop_id: shopId }) as { total?: number };
+  const paid = db.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM shop_payments WHERE shop_id = @shop_id")
+    .get({ shop_id: shopId }) as { total?: number };
+  const totalBilled = Number(billed.total || 0);
+  const totalPaid = Number(paid.total || 0);
+  const due = Math.max(0, totalBilled - totalPaid);
+  const status = due <= 0 && totalBilled > 0 ? "paid" : totalPaid > 0 ? "partial" : "unpaid";
+  db.prepare("UPDATE shop_accounts SET total_billed = @totalBilled, total_paid = @totalPaid, due_amount = @due, payment_status = @status, updated_at = @updated_at WHERE id = @id")
+    .run({ id: shopId, totalBilled, totalPaid, due, status, updated_at: now() });
+  const transactions = db.prepare("SELECT id, total_amount FROM transactions WHERE shop_id = @shop_id").all({ shop_id: shopId }) as Array<{ id: string; total_amount?: number }>;
+  const paymentTotals = db.prepare("SELECT transaction_id, COALESCE(SUM(amount), 0) AS paid FROM shop_payments WHERE shop_id = @shop_id GROUP BY transaction_id").all({ shop_id: shopId }) as Array<{ transaction_id: string; paid?: number }>;
+  const paymentsByTransaction = new Map(paymentTotals.map((payment) => [payment.transaction_id, Number(payment.paid || 0)]));
+  const updateTransaction = db.prepare("UPDATE transactions SET amount_paid = @paid, due_amount = @due, payment_status = @status WHERE id = @id");
+  for (const transaction of transactions) {
+    const transactionTotal = Number(transaction.total_amount || 0);
+    const transactionPaid = paymentsByTransaction.get(transaction.id) || 0;
+    const transactionDue = Math.max(0, transactionTotal - transactionPaid);
+    updateTransaction.run({ id: transaction.id, paid: transactionPaid, due: transactionDue, status: paymentStatusFor(transactionPaid, transactionTotal) });
+  }
+}
+
+function paymentStatusFor(paid: number, total: number) {
+  const due = Math.max(0, total - paid);
+  return due <= 0 && total > 0 ? "paid" : paid > 0 ? "partial" : "unpaid";
+}
+
+export function maintenanceUpdate(table: TableName, id: string, values: Record<string, unknown>) {
+  const existing = getDb().prepare(`SELECT * FROM ${table} WHERE id = @id`).get({ id }) as Record<string, unknown> | undefined;
+  const result = updateRows(table, values, [{ column: "id", op: "eq", value: id }]);
+  if (table === "supplier_payments") refreshSupplierBalance(String(values.supplier_id || existing?.supplier_id || ""));
+  if (table === "shop_payments") refreshShopAccount(String(values.shop_id || existing?.shop_id || ""));
+  return result;
+}
+
+export function maintenanceDelete(table: TableName, id: string) {
+  const db = getDb();
+  if (table === "companies") {
+    const linked = db.prepare("SELECT COUNT(*) AS count FROM products WHERE company_id = @company_id").get({ company_id: id }) as { count?: number };
+    if (Number(linked.count || 0) > 0) throw new Error("Cannot delete a company linked to products");
+  }
+  if (table === "shop_accounts") {
+    const linked = db.prepare("SELECT COUNT(*) AS count FROM transactions WHERE shop_id = @shop_id").get({ shop_id: id }) as { count?: number };
+    if (Number(linked.count || 0) > 0) throw new Error("Cannot delete a shop account linked to transactions");
+  }
+  const row = db.prepare(`SELECT * FROM ${table} WHERE id = @id`).get({ id }) as Record<string, unknown> | undefined;
+  if (!row) throw new Error("Record not found");
+  const result = deleteRows(table, [{ column: "id", op: "eq", value: id }]);
+  if (table === "supplier_payments") refreshSupplierBalance(String(row.supplier_id || ""));
+  if (table === "shop_payments") refreshShopAccount(String(row.shop_id || ""));
+  return result;
+}
+
+export function deleteTransactionAndRestoreStock(transactionId: string) {
+  const db = getDb();
+  const transaction = db.prepare("SELECT * FROM transactions WHERE id = @id").get({ id: transactionId });
+
+  if (!transaction) {
+    return { data: null, error: { message: "Transaction not found", code: "PGRST116" } };
+  }
+
+  const items = db
+    .prepare("SELECT * FROM transaction_items WHERE transaction_id = @transaction_id")
+    .all({ transaction_id: transactionId }) as Array<{
+      product_id: string;
+      variant_id?: string | null;
+      quantity: number;
+    }>;
+
+  db.exec("BEGIN");
+  try {
+    const updateVariantStock = db.prepare(
+      "UPDATE product_variants SET quantity = quantity + @quantity, updated_at = @updated_at WHERE id = @id"
+    );
+    const updateProductStock = db.prepare(
+      "UPDATE products SET quantity = quantity + @quantity, updated_at = @updated_at WHERE id = @id"
+    );
+    const timestamp = now();
+
+    for (const item of items) {
+      const quantity = Math.max(0, Number(item.quantity || 0));
+      if (quantity <= 0) continue;
+
+      const result = item.variant_id
+        ? updateVariantStock.run({ id: item.variant_id, quantity, updated_at: timestamp })
+        : updateProductStock.run({ id: item.product_id, quantity, updated_at: timestamp });
+
+      if (result.changes === 0) {
+        throw new Error("Could not restore stock for one or more transaction items");
+      }
+    }
+
+    const deleteResult = db.prepare("DELETE FROM transactions WHERE id = @id").run({ id: transactionId });
+    db.exec("COMMIT");
+    return { data: { deleted: deleteResult.changes, restoredItems: items.length }, error: null };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export async function ensureSeedAdmin() {
   const db = readDb();
   if (db.users.length > 0) return;
@@ -911,7 +1148,9 @@ export function replaceSqliteDbFromBackup(sourcePath: string) {
 
   const target = dbPath();
   mkdirSync(dirname(target), { recursive: true });
-  if (existsSync(target)) unlinkSync(target);
+  for (const file of [target, `${target}-wal`, `${target}-shm`]) {
+    if (existsSync(file)) unlinkSync(file);
+  }
   copyFileSync(sourcePath, target);
   getDb();
 }

@@ -112,6 +112,11 @@ export function normalizeTransaction(row: TransactionRow): Transaction {
     created_at: nullableText(row.created_at),
     is_replacement_transaction: row.is_replacement_transaction ?? false,
     original_return_id: row.original_return_id,
+    shop_id: row.shop_id,
+    customer_name: row.customer_name,
+    sale_type: row.sale_type,
+    payment_status: row.payment_status,
+    due_amount: row.due_amount ?? 0,
   };
 }
 

@@ -5,6 +5,9 @@ export type AccountingTransaction = {
   transaction_date: string;
   total_amount: number;
   amount_paid?: number | null;
+  due_amount?: number | null;
+  sale_type?: string | null;
+  shop_id?: string | null;
   status?: string | null;
   is_replacement_transaction?: boolean | null;
   original_return_id?: string | null;
@@ -37,6 +40,11 @@ export type AccountingSupplierPayment = {
   amount: number;
 };
 
+export type AccountingShopPayment = {
+  payment_date: string;
+  amount: number;
+};
+
 export type ReportRange = {
   start: Date;
   end: Date;
@@ -57,6 +65,7 @@ export type ProfitLossStatement = {
 export type FinancialPositionStatement = {
   inventoryValue: number;
   periodCashReceived: number;
+  customerReceivables: number;
   supplierLiabilities: number;
   supplierPayments: number;
   totalAssets: number;
@@ -198,19 +207,28 @@ export function calculateFinancialPosition(
   products: AccountingProduct[],
   suppliers: AccountingSupplier[],
   supplierPayments: AccountingSupplierPayment[],
+  shopPayments: AccountingShopPayment[],
   currentPeriodProfit: number
 ): FinancialPositionStatement {
   const inventoryValue = products.reduce(
     (sum, product) => sum + Number(product.cost || 0) * Number(product.quantity || 0),
     0
   );
-  const periodCashReceived = transactions
+  const initialCashReceived = transactions
     .filter((transaction) => isCompleted(transaction) && isWithinRange(transaction.transaction_date, range))
     .reduce((sum, transaction) => {
       const paid = Number(transaction.amount_paid || 0);
       const fallback = Number(transaction.total_amount || 0);
-      return sum + (paid > 0 ? paid : fallback);
+      const isShopBill = transaction.sale_type === "shop" || Boolean(transaction.shop_id);
+      return sum + (isShopBill ? paid : paid > 0 ? paid : fallback);
     }, 0);
+  const periodFollowUpPayments = shopPayments
+    .filter((payment) => isWithinRange(payment.payment_date, range))
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const periodCashReceived = initialCashReceived + periodFollowUpPayments;
+  const customerReceivables = transactions
+    .filter((transaction) => isCompleted(transaction) && (transaction.sale_type === "shop" || Boolean(transaction.shop_id)))
+    .reduce((sum, transaction) => sum + Math.max(0, Number(transaction.due_amount || 0)), 0);
   const supplierLiabilities = suppliers.reduce(
     (sum, supplier) => sum + Math.max(0, Number(supplier.due_amount || 0)),
     0
@@ -218,12 +236,13 @@ export function calculateFinancialPosition(
   const periodSupplierPayments = supplierPayments
     .filter((payment) => isWithinRange(payment.payment_date, range))
     .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-  const totalAssets = inventoryValue + periodCashReceived;
+  const totalAssets = inventoryValue + periodCashReceived + customerReceivables;
   const totalLiabilities = supplierLiabilities;
 
   return {
     inventoryValue: toMoney(inventoryValue),
     periodCashReceived: toMoney(periodCashReceived),
+    customerReceivables: toMoney(customerReceivables),
     supplierLiabilities: toMoney(supplierLiabilities),
     supplierPayments: toMoney(periodSupplierPayments),
     totalAssets: toMoney(totalAssets),
@@ -232,4 +251,3 @@ export function calculateFinancialPosition(
     netPosition: toMoney(totalAssets - totalLiabilities),
   };
 }
-

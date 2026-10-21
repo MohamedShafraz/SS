@@ -21,6 +21,7 @@ class LocalQueryBuilder {
   private orderBy: Order | null = null;
   private selectValue = "*";
   private writePromise: Promise<LocalResponse> | null = null;
+  private maintenanceMode = false;
 
   constructor(private readonly table: string) {}
 
@@ -51,6 +52,11 @@ class LocalQueryBuilder {
     return this;
   }
 
+  maintenance() {
+    this.maintenanceMode = true;
+    return this;
+  }
+
   single() {
     return this.executeRead(true, false);
   }
@@ -73,7 +79,7 @@ class LocalQueryBuilder {
       fetch(`/api/local-db/${this.table}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ values, filters: this.filters }),
+        body: JSON.stringify({ values, filters: this.filters, maintenance: this.maintenanceMode }),
       }).then((response) => response.json())
     );
     return this;
@@ -83,6 +89,7 @@ class LocalQueryBuilder {
     this.writePromise = Promise.resolve().then(() => {
       const params = new URLSearchParams({
         filters: JSON.stringify(this.filters),
+        maintenance: String(this.maintenanceMode),
       });
       return fetch(`/api/local-db/${this.table}?${params}`, {
         method: "DELETE",
@@ -212,6 +219,8 @@ export const updateProductVariant = async (
     | "variant_value"
     | "variant_type_2"
     | "variant_value_2"
+    | "sku"
+    | "barcode"
     | "quantity"
     | "price_adjustment"
     | "least_price"

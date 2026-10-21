@@ -1,31 +1,57 @@
 "use client";
 
 import { MainLayout } from "@/components/layout";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Plus, Edit, Trash2, Barcode } from "lucide-react";
 import JsBarcode from "jsbarcode";
 import toast from "react-hot-toast";
 import { supabase, getProductVariants } from "@/lib/supabase";
+import { OfflineProductImage } from "@/components/OfflineProductImage";
 import { VariantManager } from "@/components/VariantManager";
-import { BusinessProfile, IndustryMode, ProductVariant } from "@/types";
+import { BarcodePdfViewerId, BarcodeStickerFieldId, BusinessProfile, IndustryMode, ProductVariant } from "@/types";
 import { getCategoryPresets, getStoredIndustryMode } from "@/lib/industry-presets";
 import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
-import { getActiveBarcodePreset } from "@/lib/barcode-layout";
+import {
+  getActiveBarcodePreset,
+  getBarcodeFieldAlignment,
+  getBarcodeFieldGapMm,
+  getVisibleBarcodeFields,
+} from "@/lib/barcode-layout";
 
 type HardwarePrinter = { name: string; displayName?: string; isDefault?: boolean };
 type HardwarePrintResult = { success: boolean; printerName?: string; error?: string; opened?: boolean };
+type PdfPreviewResult = {
+  success: boolean;
+  error?: string;
+  viewerId?: BarcodePdfViewerId;
+  viewerName?: string;
+  repairAvailable?: boolean;
+};
 type HardwareBridge = {
   listPrinters: () => Promise<HardwarePrinter[]>;
   printBarcode: (
     html: string,
     printerName?: string,
-    options?: { pageWidthMm?: number; pageHeightMm?: number }
+    options?: {
+      pageWidthMm?: number;
+      pageHeightMm?: number;
+      orientation?: "horizontal" | "vertical";
+      preservePageDimensions?: boolean;
+    }
   ) => Promise<HardwarePrintResult>;
   printBarcodePdf?: (
     pdfBase64: string,
     printerName?: string
   ) => Promise<HardwarePrintResult>;
-  previewBarcodePdf?: (pdfBase64: string) => Promise<{ success: boolean; error?: string }>;
+  previewBarcodePdf?: (
+    pdfBase64: string,
+    viewerIds?: BarcodePdfViewerId[]
+  ) => Promise<PdfPreviewResult>;
+  previewBarcodeHtml?: (
+    html: string,
+    options: { pageWidthMm: number; pageHeightMm: number },
+    viewerIds?: BarcodePdfViewerId[]
+  ) => Promise<PdfPreviewResult>;
 };
 
 interface Product {
@@ -68,6 +94,7 @@ export default function ProductsPage() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [companyFilter, setCompanyFilter] = useState("all");
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [knownVariantBarcodes, setKnownVariantBarcodes] = useState<string[]>([]);
   const [industryMode, setIndustryMode] = useState<IndustryMode>("general");
   const [settings, setSettings] = useState<BusinessProfile>({
     businessName: "Unified Business",
@@ -127,25 +154,92 @@ export default function ProductsPage() {
     };
   }, []);
 
-  const createBarcodeValue = useCallback(() => {
+  const formatBarcodeValue = useCallback((digits: string) => {
+    const digitLength = Math.max(1, Math.min(18, Number(settings.barcodeDigitLength || 13)));
+    const normalizedDigits = digits.replace(/\D/g, "").padStart(digitLength, "0").slice(-digitLength);
+    const prefix = settings.barcodePrefix?.trim() || "BCD";
+
+    return settings.barcodeUsePrefix === false ? normalizedDigits : `${prefix}-${normalizedDigits}`;
+  }, [settings.barcodeDigitLength, settings.barcodePrefix, settings.barcodeUsePrefix]);
+
+  const createBarcodeValue = useCallback((extraExistingBarcodes: string[] = [], seedDigits?: string) => {
     const digitLength = Math.max(1, Math.min(18, Number(settings.barcodeDigitLength || 13)));
     const modulus = 10n ** BigInt(digitLength);
-    const existing = new Set(products.map((product) => product.barcode));
-    let numericValue = BigInt(Date.now()) % modulus;
+    const existing = new Set([
+      ...products.map((product) => product.barcode),
+      ...knownVariantBarcodes,
+      ...extraExistingBarcodes,
+    ].filter(Boolean));
+    let numericValue = BigInt(seedDigits?.replace(/\D/g, "") || Date.now()) % modulus;
 
     for (let attempt = 0; attempt < Number(modulus > 1000n ? 1000n : modulus); attempt += 1) {
       const digits = numericValue.toString().padStart(digitLength, "0").slice(-digitLength);
-      const prefix = settings.barcodePrefix?.trim() || "BCD";
-      const barcode = settings.barcodeUsePrefix === false ? digits : `${prefix}-${digits}`;
+      const barcode = formatBarcodeValue(digits);
       if (!existing.has(barcode)) return barcode;
       numericValue = (numericValue + 1n) % modulus;
     }
 
     const fallbackDigits = String(Date.now()).slice(-digitLength).padStart(digitLength, "0");
-    return settings.barcodeUsePrefix === false
-      ? fallbackDigits
-      : `${settings.barcodePrefix?.trim() || "BCD"}-${fallbackDigits}`;
-  }, [products, settings.barcodeDigitLength, settings.barcodePrefix, settings.barcodeUsePrefix]);
+    return formatBarcodeValue(fallbackDigits);
+  }, [formatBarcodeValue, knownVariantBarcodes, products, settings.barcodeDigitLength]);
+
+  const createVariantBarcodeValue = useCallback(() => {
+    const digitLength = Math.max(1, Math.min(18, Number(settings.barcodeDigitLength || 13)));
+    const suffixLength = Math.min(2, digitLength);
+    const maxSuffix = 10 ** suffixLength - 1;
+    const productDigits = String(formData.barcode || "").replace(/\D/g, "").slice(-digitLength);
+    const variantBarcodes = Array.from(new Set([
+      ...knownVariantBarcodes,
+      ...variants.map((variant) => variant.barcode),
+    ].filter(Boolean)));
+
+    if (productDigits) {
+      const paddedProductDigits = productDigits.padStart(digitLength, "0").slice(-digitLength);
+      const stem = paddedProductDigits.slice(0, Math.max(0, digitLength - suffixLength));
+
+      for (let suffix = 1; suffix <= maxSuffix; suffix += 1) {
+        const candidateDigits = `${stem}${String(suffix).padStart(suffixLength, "0")}`.slice(-digitLength);
+        const candidate = formatBarcodeValue(candidateDigits);
+        if (
+          candidate !== formData.barcode &&
+          !products.some((product) => product.barcode === candidate) &&
+          !variantBarcodes.includes(candidate)
+        ) {
+          return candidate;
+        }
+      }
+    }
+
+    return createBarcodeValue(variantBarcodes);
+  }, [
+    createBarcodeValue,
+    formData.barcode,
+    formatBarcodeValue,
+    knownVariantBarcodes,
+    products,
+    settings.barcodeDigitLength,
+    variants,
+  ]);
+
+  const createVariantSkuValue = useCallback((
+    variantType = "size",
+    variantValue = "",
+    variantType2 = "",
+    variantValue2 = ""
+  ) => {
+    const parentSku = String(formData.sku || "SKU").trim().replace(/\s+/g, "-").toUpperCase();
+    const parts = [
+      variantType.slice(0, 2),
+      variantValue,
+      variantType2.slice(0, 2),
+      variantValue2,
+    ]
+      .filter(Boolean)
+      .map((value) => value.replace(/[^A-Za-z0-9]+/g, "").toUpperCase().slice(0, 6));
+    const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+
+    return [parentSku || "SKU", ...parts, suffix].join("-").slice(0, 64);
+  }, [formData.sku]);
 
   useEffect(() => {
     if (!showForm || !barcodePreviewRef.current) return;
@@ -242,6 +336,23 @@ export default function ProductsPage() {
     };
   }, [fetchProducts]);
 
+  const refreshKnownVariantBarcodes = useCallback(async () => {
+    try {
+      const { data } = await supabase.from("product_variants").select("*");
+      setKnownVariantBarcodes(
+        ((data as ProductVariant[]) || [])
+          .map((variant) => variant.barcode)
+          .filter(Boolean)
+      );
+    } catch {
+      setKnownVariantBarcodes([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshKnownVariantBarcodes();
+  }, [refreshKnownVariantBarcodes]);
+
   useEffect(() => {
     let active = true;
 
@@ -275,6 +386,12 @@ export default function ProductsPage() {
     return matchesSearch && matchesCategory && matchesCompany;
   });
 
+  const preventSearchSubmit = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+    }
+  };
+
   const handleAddProduct = () => {
     setEditingId(null);
     setVariants([]);
@@ -306,6 +423,15 @@ export default function ProductsPage() {
       return;
     }
 
+    const priceValue = Number(formData.price || 0);
+    const costValue = Number(formData.cost || 0);
+    const leastPriceValue = Math.max(0, Number(formData.least_price || 0));
+
+    if (leastPriceValue > 0 && (leastPriceValue < costValue || leastPriceValue > priceValue)) {
+      toast.error("Least price must be between cost and selling price");
+      return;
+    }
+
     try {
       // Calculate total quantity from variants if they exist
       const totalQuantity = variants.length > 0 
@@ -319,9 +445,9 @@ export default function ProductsPage() {
           .update({
             name: formData.name,
             category: formData.category,
-            price: formData.price,
-            cost: formData.cost,
-            least_price: Math.max(0, Number(formData.least_price || 0)),
+            price: priceValue,
+            cost: costValue,
+            least_price: leastPriceValue,
             least_price_code: formData.least_price_code || "",
             company_id: formData.company_id || null,
             quantity: totalQuantity,
@@ -344,9 +470,9 @@ export default function ProductsPage() {
           {
             name: formData.name,
             category: formData.category,
-            price: formData.price,
-            cost: formData.cost,
-            least_price: Math.max(0, Number(formData.least_price || 0)),
+            price: priceValue,
+            cost: costValue,
+            least_price: leastPriceValue,
             least_price_code: formData.least_price_code || "",
             company_id: formData.company_id || null,
             quantity: Math.max(0, formData.quantity || 0),
@@ -481,13 +607,12 @@ export default function ProductsPage() {
   const getBarcodePageSizeMm = () => {
     const preset = activeBarcodePreset;
     const isGa2408tPreset = isGa2408tLayout();
-    const isVertical = preset.orientation === "vertical";
     return {
       width: isGa2408tPreset
-        ? (isVertical ? 25 : 102)
+        ? 102
         : preset.stickerWidthMm * preset.columns + preset.columnGapMm * Math.max(0, preset.columns - 1) + preset.marginLeftMm + preset.marginRightMm,
       height: isGa2408tPreset
-        ? (isVertical ? 102 : 25)
+        ? 25
         : Math.min(
         preset.maxRollLengthMm,
         preset.stickerHeightMm * preset.rows + preset.rowGapMm * Math.max(0, preset.rows - 1) + preset.marginTopMm + preset.marginBottomMm
@@ -501,7 +626,6 @@ export default function ProductsPage() {
     const cellsPerPage = Math.max(1, preset.columns * preset.rows);
     const leastPrice = Number(target.least_price || 0);
     const isGa2408tPreset = isGa2408tLayout();
-    const isVertical = preset.orientation === "vertical";
     const barcodeImage = makeBarcodeImage(target.barcode, isGa2408tPreset ? false : preset.showBarcodeText);
     const { width: pageWidthMm, height: pageHeightMm } = getBarcodePageSizeMm();
     const businessName = escapeHtml(settings.businessName || "");
@@ -520,17 +644,50 @@ export default function ProductsPage() {
     const gaBarcodeHeightMm = hasExtraBusinessInfo ? 7.7 : 10.75;
     const gaPriceHeightMm = hasExtraBusinessInfo ? 2.65 : 3.6;
     const gaCodeHeightMm = hasExtraBusinessInfo ? 2.35 : 3.05;
+    const barcodeTextFontSize = preset.barcodeTextFontSize || Math.max(6, preset.businessInfoFontSize);
+    const gaBarcodeTextHeightMm = Math.max(1.65, barcodeTextFontSize * 0.3);
+    const fieldStyle = (field: BarcodeStickerFieldId) => {
+      const alignment = getBarcodeFieldAlignment(preset, field);
+      const gap = getBarcodeFieldGapMm(preset, field);
+      return `text-align: ${alignment}; margin-bottom: ${gap}mm;`;
+    };
+    const barcodeFieldStyle = (field: BarcodeStickerFieldId) => {
+      const alignment = getBarcodeFieldAlignment(preset, field);
+      const justifyContent =
+        alignment === "left" ? "flex-start" : alignment === "right" ? "flex-end" : "center";
+      const gap = getBarcodeFieldGapMm(preset, field);
+      return `justify-content: ${justifyContent}; margin-bottom: ${gap}mm;`;
+    };
+    const fieldHtml = (field: BarcodeStickerFieldId) => {
+      if (field === "businessName") {
+        return `<div class="field business strong" style="${fieldStyle(field)}">${businessName}</div>`;
+      }
+      if (field === "businessAddress") {
+        return `<div class="field business address" style="${fieldStyle(field)}">${businessAddress}</div>`;
+      }
+      if (field === "businessPhone") {
+        return `<div class="field business phone" style="${fieldStyle(field)}">${businessPhone}</div>`;
+      }
+      if (field === "productName") {
+        return `<div class="field product" style="${fieldStyle(field)}">${targetName}</div>`;
+      }
+      if (field === "barcodeImage") {
+        return `<div class="field barcode" style="${barcodeFieldStyle(field)}">${barcodeImage}</div>`;
+      }
+      if (field === "barcodeText") {
+        return `<div class="field barcode-text" style="${fieldStyle(field)}">${barcodeText}</div>`;
+      }
+      if (field === "sellingPrice") {
+        return `<div class="field price" style="${fieldStyle(field)}">Price: ${priceText}</div>`;
+      }
+      if (field === "leastPrice") {
+        return `<div class="field least" style="${fieldStyle(field)}">Least: ${leastPriceText}</div>`;
+      }
+      return `<div class="field code" style="${fieldStyle(field)}">${codeText}</div>`;
+    };
     const label = `
       <div class="label">
-        ${preset.showBusinessName ? `<div class="business strong">${businessName}</div>` : ""}
-        ${preset.showBusinessAddress ? `<div class="business address">${businessAddress}</div>` : ""}
-        ${preset.showBusinessPhone ? `<div class="business phone">${businessPhone}</div>` : ""}
-        ${preset.showProductName ? `<div class="product">${targetName}</div>` : ""}
-        <div class="barcode">${barcodeImage}</div>
-        ${preset.showBarcodeText ? `<div class="barcode-text">${barcodeText}</div>` : ""}
-        ${preset.showSellingPrice ? `<div class="price">Price: ${priceText}</div>` : ""}
-        ${preset.showLeastPrice ? `<div class="least">Least: ${leastPriceText}</div>` : ""}
-        ${preset.showLeastPriceCode ? `<div class="code">${codeText}</div>` : ""}
+        ${getVisibleBarcodeFields(preset).map(fieldHtml).join("")}
       </div>
     `;
     const pages: string[] = [];
@@ -546,34 +703,36 @@ export default function ProductsPage() {
       body { font-family: Arial, Helvetica, sans-serif; color: #111; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .sheet { box-sizing: border-box; width: ${pageWidthMm}mm; min-height: ${pageHeightMm}mm; padding: ${preset.marginTopMm}mm ${preset.marginRightMm}mm ${preset.marginBottomMm}mm ${preset.marginLeftMm}mm; display: grid; grid-template-columns: repeat(${preset.columns}, ${preset.stickerWidthMm}mm); grid-auto-rows: ${preset.stickerHeightMm}mm; gap: ${preset.rowGapMm}mm ${preset.columnGapMm}mm; page-break-after: always; }
       .label { box-sizing: border-box; width: ${preset.stickerWidthMm}mm; height: ${preset.stickerHeightMm}mm; overflow: hidden; text-align: center; padding: 1mm; display: flex; flex-direction: column; justify-content: center; line-height: 1.05; }
+      .field { width: 100%; }
       .business { font-size: ${preset.businessInfoFontSize}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .address { font-size: ${businessAddressFontSize}px; }
       .phone { font-size: ${businessPhoneFontSize}px; }
       .strong { font-weight: 700; }
       .product { font-size: ${preset.productNameFontSize}px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .barcode { display: flex; align-items: center; justify-content: center; overflow: hidden; }
       .barcode img { max-width: 100%; height: ${preset.barcodeHeightMm}mm; display: block; }
-      .barcode-text { font-size: ${Math.max(6, preset.businessInfoFontSize)}px; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .barcode-text { font-size: ${barcodeTextFontSize}px; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .price { font-size: ${preset.sellingPriceFontSize}px; font-weight: 700; }
       .least { font-size: ${preset.leastPriceFontSize}px; }
       .code { font-size: ${preset.leastPriceCodeFontSize}px; font-weight: 700; letter-spacing: 0; }
       ${isGa2408tPreset ? `
-      @page { size: ${isVertical ? "25mm 102mm" : "102mm 25mm"}; margin: 0; }
-      html, body { width: ${isVertical ? "25mm" : "102mm"}; height: auto; overflow: hidden; }
+      @page { size: 102mm 25mm; margin: 0; }
+      html, body { width: 102mm; height: auto; overflow: hidden; }
       .sheet {
-        width: ${isVertical ? "25mm" : "102mm"};
-        min-height: ${isVertical ? "102mm" : "25mm"};
-        height: ${isVertical ? "102mm" : "25mm"};
+        width: 102mm;
+        min-height: 25mm;
+        height: 25mm;
         padding: 0;
-        grid-template-columns: ${isVertical ? "25mm" : "repeat(3, 31.33mm)"};
-        grid-auto-rows: ${isVertical ? "31.33mm" : "25mm"};
-        gap: ${isVertical ? "4mm 0" : "0 4mm"};
+        grid-template-columns: repeat(3, 31.33mm);
+        grid-auto-rows: 25mm;
+        gap: 0 4mm;
         align-content: start;
         page-break-after: always;
         break-after: page;
       }
       .label {
-        width: ${isVertical ? "25mm" : "31.33mm"};
-        height: ${isVertical ? "31.33mm" : "25mm"};
+        width: 31.33mm;
+        height: 25mm;
         padding: 0.45mm 0.25mm 0.25mm;
         justify-content: flex-start;
         align-items: center;
@@ -624,9 +783,9 @@ export default function ProductsPage() {
       }
       .barcode-text {
         width: 100%;
-        height: 1.65mm;
-        font-size: 5.5px;
-        line-height: 1.65mm;
+        height: ${gaBarcodeTextHeightMm}mm;
+        font-size: ${barcodeTextFontSize}px;
+        line-height: ${gaBarcodeTextHeightMm}mm;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -680,10 +839,9 @@ export default function ProductsPage() {
   const buildGa2408tPdfBase64 = async (target: BarcodeTarget) => {
     const { jsPDF } = await import("jspdf");
     const preset = activeBarcodePreset;
-    const isVertical = preset.orientation === "vertical";
-    const pageFormat: [number, number] = isVertical ? [25, 102] : [102, 25];
+    const pageFormat: [number, number] = [102, 25];
     const doc = new jsPDF({
-      orientation: isVertical ? "portrait" : "landscape",
+      orientation: "landscape",
       unit: "mm",
       format: pageFormat,
       compress: true,
@@ -692,7 +850,9 @@ export default function ProductsPage() {
     const barcodeImage = makeBarcodeImageDataUrl(target.barcode);
     const leastPrice = Number(target.least_price || 0);
     const priceText = `Price: ${formatCurrency(target.price, settings.currency)}`;
+    const leastPriceText = leastPrice ? `Least: ${formatCurrency(leastPrice, settings.currency)}` : "Least: -";
     const codeText = target.least_price_code || target.sku || "";
+    const businessName = settings.businessName || "";
     const businessAddress = settings.address || "";
     const businessPhone = settings.phone || "";
     const hasExtraBusinessInfo = Boolean(preset.showBusinessAddress || preset.showBusinessPhone);
@@ -704,75 +864,136 @@ export default function ProductsPage() {
     const barcodeBottomGap = hasExtraBusinessInfo ? 0.65 : 1.1;
     const priceStep = hasExtraBusinessInfo ? 2.75 : 3.7;
     const codeFontSize = hasExtraBusinessInfo ? Math.max(7, preset.leastPriceCodeFontSize - 2) : preset.leastPriceCodeFontSize;
-    const labelWidth = isVertical ? 25 : 31.33;
-    const labelHeight = isVertical ? 31.33 : 25;
+    const barcodeTextFontSize = preset.barcodeTextFontSize || Math.max(6, preset.businessInfoFontSize);
+    const barcodeTextStep = Math.max(2.1, barcodeTextFontSize * 0.36);
+    const labelWidth = 31.33;
     const gap = 4;
     const labelsPerPage = 3;
 
-    const drawCenteredText = (text: string, x: number, y: number, width: number, fontSize: number, bold = false) => {
+    const drawText = (
+      field: BarcodeStickerFieldId,
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontSize: number,
+      bold = false
+    ) => {
+      const alignment = getBarcodeFieldAlignment(preset, field);
+      const textX = alignment === "left" ? x : alignment === "right" ? x + width : x + width / 2;
       doc.setFont("helvetica", bold ? "bold" : "normal");
       doc.setFontSize(fontSize);
       const clipped = doc.splitTextToSize(text, width).join(" ");
       const value = clipped.length > 34 ? `${clipped.slice(0, 31)}...` : clipped;
-      doc.text(value, x + width / 2, y, { align: "center", baseline: "middle", maxWidth: width });
+      doc.text(value, textX, y, { align: alignment, baseline: "middle", maxWidth: width });
+    };
+
+    const drawBarcodeImage = (field: BarcodeStickerFieldId, x: number, y: number) => {
+      const imageWidth = labelWidth - 0.6;
+      const alignment = getBarcodeFieldAlignment(preset, field);
+      const imageX =
+        alignment === "left"
+          ? x + 0.3
+          : alignment === "right"
+            ? x + labelWidth - imageWidth - 0.3
+            : x + (labelWidth - imageWidth) / 2;
+      doc.addImage(barcodeImage, "PNG", imageX, y, imageWidth, barcodeHeight);
     };
 
     for (let index = 0; index < totalCopies; index += labelsPerPage) {
-      if (index > 0) doc.addPage(pageFormat, isVertical ? "portrait" : "landscape");
+      if (index > 0) doc.addPage(pageFormat, "landscape");
       const count = Math.min(labelsPerPage, totalCopies - index);
 
       for (let cell = 0; cell < count; cell += 1) {
-        const x = isVertical ? 0 : cell * (labelWidth + gap);
-        const baseY = isVertical ? cell * (labelHeight + gap) : 0;
+        const x = cell * (labelWidth + gap);
+        const baseY = 0;
         const contentX = x + 0.35;
         const contentWidth = labelWidth - 0.7;
         let y = baseY + 1.4;
 
-        if (preset.showBusinessName) {
-          drawCenteredText(settings.businessName || "", contentX, y, contentWidth, preset.businessInfoFontSize, true);
-          y += businessStep;
-        }
+        for (const field of getVisibleBarcodeFields(preset)) {
+          if (field === "businessName") {
+            drawText(field, businessName, contentX, y, contentWidth, preset.businessInfoFontSize, true);
+            y += businessStep;
+          } else if (field === "businessAddress") {
+            drawText(field, businessAddress, contentX, y, contentWidth, businessAddressFontSize);
+            y += businessStep;
+          } else if (field === "businessPhone") {
+            drawText(field, businessPhone, contentX, y, contentWidth, businessPhoneFontSize);
+            y += businessStep;
+          } else if (field === "productName") {
+            drawText(field, target.name, contentX, y, contentWidth, preset.productNameFontSize, true);
+            y += productStep;
+          } else if (field === "barcodeImage") {
+            drawBarcodeImage(field, x, y);
+            y += barcodeHeight + barcodeBottomGap;
+          } else if (field === "barcodeText") {
+            drawText(field, target.barcode, contentX, y, contentWidth, barcodeTextFontSize);
+            y += barcodeTextStep;
+          } else if (field === "sellingPrice") {
+            drawText(field, priceText, contentX, y, contentWidth, preset.sellingPriceFontSize, true);
+            y += priceStep;
+          } else if (field === "leastPrice") {
+            drawText(field, leastPriceText, contentX, y, contentWidth, preset.leastPriceFontSize);
+            y += 2.4;
+          } else if (field === "leastPriceCode") {
+            drawText(field, codeText, contentX, y, contentWidth, codeFontSize, true);
+          }
 
-        if (preset.showBusinessAddress) {
-          drawCenteredText(businessAddress, contentX, y, contentWidth, businessAddressFontSize);
-          y += businessStep;
-        }
-
-        if (preset.showBusinessPhone) {
-          drawCenteredText(businessPhone, contentX, y, contentWidth, businessPhoneFontSize);
-          y += businessStep;
-        }
-
-        if (preset.showProductName) {
-          drawCenteredText(target.name, contentX, y, contentWidth, preset.productNameFontSize, true);
-          y += productStep;
-        }
-
-        doc.addImage(barcodeImage, "PNG", x + 0.3, y, labelWidth - 0.6, barcodeHeight);
-        y += barcodeHeight + barcodeBottomGap;
-
-        if (preset.showBarcodeText) {
-          drawCenteredText(target.barcode, contentX, y, contentWidth, 5.5);
-          y += 2.1;
-        }
-
-        if (preset.showSellingPrice) {
-          drawCenteredText(priceText, contentX, y, contentWidth, preset.sellingPriceFontSize, true);
-          y += priceStep;
-        }
-
-        if (preset.showLeastPrice) {
-          drawCenteredText(leastPrice ? `Least: ${formatCurrency(leastPrice, settings.currency)}` : "Least: -", contentX, y, contentWidth, preset.leastPriceFontSize);
-          y += 2.4;
-        }
-
-        if (preset.showLeastPriceCode) {
-          drawCenteredText(codeText, contentX, y, contentWidth, codeFontSize, true);
+          y += getBarcodeFieldGapMm(preset, field);
         }
       }
     }
 
     return doc.output("datauristring").split(",")[1];
+  };
+
+  const getConfiguredPdfViewerIds = () => {
+    const supported: BarcodePdfViewerId[] = ["system", "adobe", "edge", "chrome", "firefox"];
+    const configured = settings.barcodePdfViewerEnabledIds?.filter((id) => supported.includes(id));
+    const enabled = configured && configured.length > 0 ? configured : supported;
+    const preferred = enabled.includes(settings.barcodePdfViewerPreferredId || "system")
+      ? (settings.barcodePdfViewerPreferredId || "system")
+      : enabled[0];
+    return [preferred, ...enabled.filter((id) => id !== preferred)];
+  };
+
+  const openBarcodePreview = async () => {
+    if (!barcodeTarget) return;
+
+    const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
+    const viewerIds = getConfiguredPdfViewerIds();
+    const labelHtml = buildBarcodePrintHtml(barcodeTarget);
+    const pageSize = getBarcodePageSizeMm();
+    let result: PdfPreviewResult | null = null;
+
+    if (isGa2408tLayout() && bridge?.previewBarcodePdf) {
+      result = await bridge.previewBarcodePdf(await buildGa2408tPdfBase64(barcodeTarget), viewerIds);
+    } else if (bridge?.previewBarcodeHtml) {
+      result = await bridge.previewBarcodeHtml(labelHtml, {
+        pageWidthMm: pageSize.width,
+        pageHeightMm: pageSize.height,
+      }, viewerIds);
+    }
+
+    if (result) {
+      if (!result.success) throw new Error(result.error || "Unable to open barcode PDF preview");
+      toast.success(`Barcode PDF opened in ${result.viewerName || "the configured viewer"}`);
+      return;
+    }
+
+    if (!isGa2408tLayout()) {
+      const printWindow = window.open("", "MSHPOSBarcodePreview", "width=900,height=520");
+      if (!printWindow) throw new Error("Preview popup was blocked");
+      printWindow.document.open();
+      printWindow.document.write(labelHtml);
+      printWindow.document.close();
+      return;
+    }
+
+    const pdfBase64 = await buildGa2408tPdfBase64(barcodeTarget);
+    const previewWindow = window.open(`data:application/pdf;base64,${pdfBase64}`, "MSHPOSBarcodePdfPreview");
+    if (!previewWindow) throw new Error("Preview popup was blocked");
   };
 
   const printBarcode = async () => {
@@ -786,17 +1007,25 @@ export default function ProductsPage() {
       const pageSize = getBarcodePageSizeMm();
 
       if (bridge && printer) {
-        const result =
-          isGa2408tLayout() && bridge.printBarcodePdf
-            ? await bridge.printBarcodePdf(await buildGa2408tPdfBase64(barcodeTarget), printer.name)
-            : await bridge.printBarcode(labelHtml, printer.name, {
-                pageWidthMm: pageSize.width,
-                pageHeightMm: pageSize.height,
-              });
-        if (!result.success) throw new Error(result.error || "Unable to print barcode");
-        toast.success(result.opened
-          ? `Barcode PDF opened for ${result.printerName || printer.displayName || printer.name}`
-          : `Barcode sent to ${result.printerName || printer.displayName || printer.name}`);
+        const result = await bridge.printBarcode(labelHtml, printer.name, {
+          pageWidthMm: pageSize.width,
+          pageHeightMm: pageSize.height,
+          orientation: isGa2408tLayout()
+            ? "horizontal"
+            : activeBarcodePreset.orientation || "horizontal",
+          // The GA driver defines its 102.87 x 25.4mm stock as Portrait.
+          // Preserve those native dimensions instead of rotating them again.
+          preservePageDimensions: isGa2408tLayout(),
+        });
+        if (!result.success) {
+          const openPreview = window.confirm(
+            `${result.error || "Direct barcode printing failed"}\n\nOpen the PDF preview instead?`
+          );
+          if (openPreview) await openBarcodePreview();
+          else toast.error(result.error || "Unable to print barcode");
+          return;
+        }
+        toast.success(`Barcode sent to ${result.printerName || printer.displayName || printer.name}`);
       } else if (typeof window.print === "function") {
         const printWindow = window.open("", "MSHPOSBarcodePrint", "width=640,height=480");
         if (!printWindow) throw new Error("Print popup was blocked");
@@ -821,25 +1050,7 @@ export default function ProductsPage() {
 
     setPreviewingBarcodePdf(true);
     try {
-      if (!isGa2408tLayout()) {
-        const printWindow = window.open("", "MSHPOSBarcodePreview", "width=900,height=520");
-        if (!printWindow) throw new Error("Preview popup was blocked");
-        printWindow.document.open();
-        printWindow.document.write(buildBarcodePrintHtml(barcodeTarget));
-        printWindow.document.close();
-        return;
-      }
-
-      const pdfBase64 = await buildGa2408tPdfBase64(barcodeTarget);
-      const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
-
-      if (bridge?.previewBarcodePdf) {
-        const result = await bridge.previewBarcodePdf(pdfBase64);
-        if (!result.success) throw new Error(result.error || "Unable to open barcode PDF preview");
-      } else {
-        const previewWindow = window.open(`data:application/pdf;base64,${pdfBase64}`, "MSHPOSBarcodePdfPreview");
-        if (!previewWindow) throw new Error("Preview popup was blocked");
-      }
+      await openBarcodePreview();
     } catch (error) {
       console.error("Unable to preview barcode PDF:", error);
       toast.error(error instanceof Error ? error.message : "Unable to preview barcode PDF");
@@ -874,6 +1085,7 @@ export default function ProductsPage() {
               placeholder="Search products..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={preventSearchSubmit}
               className="input-base"
             />
             <select
@@ -959,15 +1171,10 @@ export default function ProductsPage() {
                       <tr key={product.id} className="hover:bg-gray-50">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <img
-                              src={product.image_url && product.image_url.startsWith('data:') 
-                                ? product.image_url 
-                                : (product.image_url || "https://via.placeholder.com/40?text=No+Image")}
+                            <OfflineProductImage
+                              src={product.image_url}
                               alt={product.name}
-                              className="w-10 h-10 rounded object-cover"
-                              onError={(e) => {
-                                e.currentTarget.src = "https://via.placeholder.com/40?text=No+Image";
-                              }}
+                              className="w-10 h-10 rounded"
                             />
                             <div>
                               <p className="font-medium text-gray-900">
@@ -1137,7 +1344,7 @@ export default function ProductsPage() {
                         onChange={(e) =>
                           setFormData({
                             ...formData,
-                            price: parseInt(e.target.value),
+                            price: Number(e.target.value),
                           })
                         }
                         className="input-base"
@@ -1152,7 +1359,7 @@ export default function ProductsPage() {
                         type="number"
                         value={formData.cost || ""}
                         onChange={(e) =>
-                          setFormData({ ...formData, cost: parseInt(e.target.value) })
+                          setFormData({ ...formData, cost: Number(e.target.value) })
                         }
                         className="input-base"
                         placeholder="Cost"
@@ -1294,13 +1501,10 @@ export default function ProductsPage() {
                     />
                     {formData.image_url && (
                       <div className="mt-3">
-                        <img
+                        <OfflineProductImage
                           src={formData.image_url}
                           alt="Preview"
-                          className="h-32 w-32 object-cover rounded"
-                          onError={(e) => {
-                            e.currentTarget.src = "https://via.placeholder.com/128?text=No+Image";
-                          }}
+                          className="h-32 w-32 rounded"
                         />
                       </div>
                     )}
@@ -1335,12 +1539,17 @@ export default function ProductsPage() {
                       <VariantManager
                         productId={editingId}
                         variants={variants}
+                        parentCost={Number(formData.cost || 0)}
+                        parentPrice={Number(formData.price || 0)}
                         onPrintBarcode={generateVariantBarcodeSticker}
+                        createVariantSku={createVariantSkuValue}
+                        createVariantBarcode={createVariantBarcodeValue}
                         onVariantsUpdated={async () => {
                           if (editingId) {
                             const updated = await getProductVariants(editingId);
                             setVariants(updated);
                           }
+                          await refreshKnownVariantBarcodes();
                         }}
                       />
                     )}

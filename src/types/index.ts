@@ -14,6 +14,21 @@ export type IndustryMode =
 export type AuthRole = "admin" | "manager" | "cashier";
 export type ReturnStatus = "pending" | "completed" | "cancelled";
 export type TransactionStatus = "pending" | "completed" | "cancelled";
+export type SaleType = "walk_in" | "shop";
+export type PaymentStatus = "paid" | "partial" | "unpaid";
+export type PosSetPriceRule = "least_price" | "cost" | "below_cost";
+export type BarcodeStickerFieldId =
+  | "businessName"
+  | "businessAddress"
+  | "businessPhone"
+  | "productName"
+  | "barcodeImage"
+  | "barcodeText"
+  | "sellingPrice"
+  | "leastPrice"
+  | "leastPriceCode";
+export type BarcodeStickerFieldAlignment = "left" | "center" | "right";
+export type BarcodePdfViewerId = "system" | "adobe" | "edge" | "chrome" | "firefox";
 
 export interface AuthUser {
   id: string;
@@ -50,6 +65,31 @@ export interface BusinessProfile {
   receiptFooterText?: string;
   barcodeStickerPresetId?: string;
   barcodeStickerCustomPresets?: BarcodeStickerPreset[];
+  barcodePdfViewerEnabledIds?: BarcodePdfViewerId[];
+  barcodePdfViewerPreferredId?: BarcodePdfViewerId;
+  autoBackupEnabled?: boolean;
+  autoBackupFolderPath?: string;
+  autoBackupLastRunAt?: string;
+  autoBackupLastStatus?: "success" | "skipped" | "error" | "";
+  autoBackupLastMessage?: string;
+  autoBackupLastPath?: string;
+  allowTransactionDelete?: boolean;
+  posSetPriceRule?: PosSetPriceRule;
+  billBarcodeEnabled?: boolean;
+  returnBarcodeEnabled?: boolean;
+  replacementBarcodeEnabled?: boolean;
+  replacementStockProtectionEnabled?: boolean;
+  partialReturnProtectionEnabled?: boolean;
+  taxCalculationEnabled?: boolean;
+  transactionFiltersEnabled?: boolean;
+  reportExportsEnabled?: boolean;
+  backupRestoreAdminOnlyEnabled?: boolean;
+  shopBillingEnabled?: boolean;
+  shopDashboardReceivablesEnabled?: boolean;
+  shopDashboardPartialBillsEnabled?: boolean;
+  shopDashboardUnpaidBillsEnabled?: boolean;
+  shopDashboardFollowupPaymentsEnabled?: boolean;
+  shopDashboardFollowupTableEnabled?: boolean;
 }
 
 export interface BarcodeStickerPreset {
@@ -74,9 +114,13 @@ export interface BarcodeStickerPreset {
   sellingPriceFontSize: number;
   leastPriceFontSize: number;
   leastPriceCodeFontSize: number;
+  barcodeTextFontSize?: number;
   businessInfoFontSize: number;
   businessAddressFontSize?: number;
   businessPhoneFontSize?: number;
+  fieldOrder?: BarcodeStickerFieldId[];
+  fieldGapsMm?: Partial<Record<BarcodeStickerFieldId, number>>;
+  fieldAlignments?: Partial<Record<BarcodeStickerFieldId, BarcodeStickerFieldAlignment>>;
   showProductName: boolean;
   showSellingPrice: boolean;
   showLeastPrice: boolean;
@@ -95,6 +139,7 @@ export interface Product {
   cost: number;
   least_price?: number;
   least_price_code?: string;
+  company_id?: string | null;
   quantity: number;
   image_url: string;
   barcode: string;
@@ -119,6 +164,11 @@ export interface Transaction {
   created_at: string;
   is_replacement_transaction?: boolean;      // NEW: marks if this is a replacement
   original_return_id?: string | null;         // NEW: links to original return
+  shop_id?: string | null;
+  customer_name?: string | null;
+  sale_type?: SaleType | null;
+  payment_status?: PaymentStatus | null;
+  due_amount?: number | null;
 }
 
 export interface TransactionItem {
@@ -305,6 +355,36 @@ export interface TransactionRow {
   created_at: string | null;
   is_replacement_transaction: boolean | null;
   original_return_id: string | null;
+  shop_id: string | null;
+  customer_name: string | null;
+  sale_type: SaleType | null;
+  payment_status: PaymentStatus | null;
+  due_amount: number | null;
+}
+
+export interface ShopAccountRow {
+  id: string;
+  name: string;
+  phone: string | null;
+  address: string | null;
+  notes: string | null;
+  total_billed: number;
+  total_paid: number;
+  due_amount: number;
+  payment_status: PaymentStatus;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ShopPaymentRow {
+  id: string;
+  shop_id: string;
+  transaction_id: string;
+  payment_date: string;
+  amount: number;
+  payment_method: string;
+  notes: string | null;
+  created_at: string | null;
 }
 
 export interface SupplierRow {
@@ -361,8 +441,15 @@ export type TransactionInsert = Pick<
       | "stripe_session_id"
       | "user_id"
       | "created_at"
+      | "amount_paid"
+      | "balance_amount"
       | "is_replacement_transaction"
       | "original_return_id"
+      | "shop_id"
+      | "customer_name"
+      | "sale_type"
+      | "payment_status"
+      | "due_amount"
     >
   >;
 
@@ -529,6 +616,25 @@ export interface Database {
           updated_at?: string;
         } & Record<string, unknown>;
         Update: Partial<Omit<SupplierRow, "id">> & Record<string, unknown>;
+        Relationships: [];
+      };
+      shop_accounts: {
+        Row: ShopAccountRow & Record<string, unknown>;
+        Insert: Omit<ShopAccountRow, "id" | "created_at" | "updated_at"> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        } & Record<string, unknown>;
+        Update: Partial<Omit<ShopAccountRow, "id">> & Record<string, unknown>;
+        Relationships: [];
+      };
+      shop_payments: {
+        Row: ShopPaymentRow & Record<string, unknown>;
+        Insert: Omit<ShopPaymentRow, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        } & Record<string, unknown>;
+        Update: Partial<Omit<ShopPaymentRow, "id">> & Record<string, unknown>;
         Relationships: [];
       };
       supplier_payments: {

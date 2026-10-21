@@ -121,7 +121,7 @@ export async function middleware(request: NextRequest) {
     );
   }
 
-  if (pathname.startsWith("/register") || pathname.startsWith("/payment") || pathname === "/activate") {
+  if (pathname.startsWith("/register") || pathname.startsWith("/payment")) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 

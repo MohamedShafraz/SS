@@ -21,6 +21,8 @@ const TABLES = new Set([
   "return_items",
   "replacement_items",
   "suppliers",
+  "shop_accounts",
+  "shop_payments",
   "supplier_payments",
   "expenses",
   "companies",
@@ -110,6 +112,16 @@ function getSessionRole(request: NextRequest) {
   }
 }
 
+function maintenanceDenied(request: NextRequest, enabled: boolean) {
+  if (!enabled) return null;
+  const role = getSessionRole(request);
+  if (role === "admin" || role === "manager") return null;
+  return NextResponse.json(
+    { data: null, error: { message: "Only admins and managers can perform maintenance actions" } },
+    { status: 403 }
+  );
+}
+
 async function readBody(request: NextRequest) {
   try {
     return await request.json();
@@ -195,6 +207,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const table = tableName(params.table);
     const body = await readBody(request);
+    const denied = maintenanceDenied(request, body.maintenance === true);
+    if (denied) return denied;
     return NextResponse.json(updateRows(table, body.values || {}, body.filters || []));
   } catch (error) {
     return NextResponse.json(
@@ -207,6 +221,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const table = tableName(params.table);
+    const denied = maintenanceDenied(request, request.nextUrl.searchParams.get("maintenance") === "true");
+    if (denied) return denied;
+    const role = getSessionRole(request);
+    if ((table === "transactions" || table === "transaction_items") && role !== "admin") {
+      return NextResponse.json(
+        { data: null, error: { message: "Only admins can delete transaction rows" } },
+        { status: 403 }
+      );
+    }
+
     const filters = JSON.parse(request.nextUrl.searchParams.get("filters") || "[]") as LocalFilter[];
     return NextResponse.json(deleteRows(table, filters));
   } catch (error) {

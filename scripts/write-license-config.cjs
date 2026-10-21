@@ -30,6 +30,8 @@ function loadDotEnv() {
 loadDotEnv();
 
 const microsoftStoreProductId = (process.env.MICROSOFT_STORE_PRODUCT_ID || "").trim();
+const activationServerUrl = (process.env.ACTIVATION_SERVER_URL || "").trim();
+const licensePublicKeyPem = (process.env.LICENSE_PUBLIC_KEY_PEM || "").trim();
 
 const outFile = path.join(process.cwd(), "client-build", "license-config.json");
 fs.mkdirSync(path.dirname(outFile), { recursive: true });
@@ -37,6 +39,8 @@ fs.writeFileSync(
   outFile,
   JSON.stringify(
     {
+      ...(activationServerUrl ? { activationServerUrl } : {}),
+      ...(licensePublicKeyPem ? { licensePublicKeyPem } : {}),
       ...(microsoftStoreProductId ? { microsoftStoreProductId } : {}),
     },
     null,

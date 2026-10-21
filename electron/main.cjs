@@ -1,5 +1,5 @@
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
-const { fork, spawn } = require("child_process");
+const { execFileSync, fork, spawn } = require("child_process");
 const path = require("path");
 const net = require("net");
 const fs = require("fs");
@@ -15,6 +15,113 @@ ipcMain.handle("hardware:list-printers", async () => {
     displayName: printer.displayName,
     isDefault: printer.isDefault,
   }));
+});
+
+const PDF_VIEWER_NAMES = {
+  system: "Windows default PDF app",
+  adobe: "Adobe Acrobat / Reader",
+  edge: "Microsoft Edge",
+  chrome: "Google Chrome",
+  firefox: "Mozilla Firefox",
+};
+
+function firstExistingPath(paths) {
+  return paths.find((candidate) => candidate && fs.existsSync(candidate)) || null;
+}
+
+function findRegisteredAppPath(executableName) {
+  if (process.platform !== "win32") return null;
+  const keys = [
+    `HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${executableName}`,
+    `HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${executableName}`,
+    `HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${executableName}`,
+  ];
+
+  for (const key of keys) {
+    try {
+      const output = execFileSync("reg.exe", ["query", key, "/ve"], {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 2000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const match = output.match(/REG_\w+\s+([^\r\n]+\.exe)\s*$/im);
+      if (match && fs.existsSync(match[1].trim())) return match[1].trim();
+    } catch {
+      // Continue through the known registry locations and filesystem fallbacks.
+    }
+  }
+  return null;
+}
+
+function detectPdfViewers() {
+  const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+  const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const localAppData = process.env.LOCALAPPDATA || "";
+  const detected = {
+    adobe: firstExistingPath([
+      findRegisteredAppPath("Acrobat.exe"),
+      findRegisteredAppPath("AcroRd32.exe"),
+      path.join(programFiles, "Adobe", "Acrobat DC", "Acrobat", "Acrobat.exe"),
+      path.join(programFiles, "Adobe", "Acrobat Reader DC", "Reader", "AcroRd32.exe"),
+      path.join(programFilesX86, "Adobe", "Acrobat DC", "Acrobat", "Acrobat.exe"),
+      path.join(programFilesX86, "Adobe", "Acrobat Reader DC", "Reader", "AcroRd32.exe"),
+    ]),
+    edge: firstExistingPath([
+      findRegisteredAppPath("msedge.exe"),
+      path.join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe"),
+      path.join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+    ]),
+    chrome: firstExistingPath([
+      findRegisteredAppPath("chrome.exe"),
+      path.join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+      path.join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+      localAppData && path.join(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
+    ]),
+    firefox: firstExistingPath([
+      findRegisteredAppPath("firefox.exe"),
+      path.join(programFiles, "Mozilla Firefox", "firefox.exe"),
+      path.join(programFilesX86, "Mozilla Firefox", "firefox.exe"),
+      localAppData && path.join(localAppData, "Mozilla Firefox", "firefox.exe"),
+    ]),
+  };
+
+  return Object.entries(PDF_VIEWER_NAMES).map(([id, name]) => ({
+    id,
+    name,
+    installed: id === "system" || Boolean(detected[id]),
+    executablePath: id === "system" ? null : detected[id],
+  }));
+}
+
+ipcMain.handle("hardware:list-pdf-viewers", async () =>
+  detectPdfViewers().map(({ executablePath: _executablePath, ...viewer }) => viewer)
+);
+
+ipcMain.handle("hardware:open-pdf-repair-settings", async () => {
+  try {
+    await shell.openExternal("ms-settings:defaultapps");
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message || "Unable to open Windows Default apps settings" };
+  }
+});
+
+ipcMain.handle("hardware:select-backup-folder", async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, error: "Window is unavailable" };
+  }
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose automatic backup folder",
+    properties: ["openDirectory", "createDirectory"],
+  });
+
+  if (result.canceled || !result.filePaths[0]) {
+    return { canceled: true };
+  }
+
+  return { canceled: false, path: result.filePaths[0] };
 });
 
 ipcMain.handle("hardware:print-barcode", async (_event, { html, printerName, options = {} }) => {
@@ -53,12 +160,36 @@ ipcMain.handle("hardware:print-barcode", async (_event, { html, printerName, opt
     if (!printer) return { success: false, error: "No printer is connected" };
 
     await new Promise((resolve, reject) => {
+      // Label drivers can define wide stock as Portrait because portrait means
+      // the stock's native dimensions, not width < height. The GA three-up
+      // layout uses that model, so preserve 102 x 25mm and do not rotate it.
+      // Older renderers omit this flag and retain the previous behavior.
+      const preservePageDimensions = options.preservePageDimensions === true;
+      const landscape = preservePageDimensions
+        ? false
+        : options.orientation === "horizontal"
+          ? true
+          : options.orientation === "vertical"
+            ? false
+            : pageWidthMm > pageHeightMm;
+      const pageWidthMicrons = Math.round(
+        (preservePageDimensions ? pageWidthMm : Math.min(pageWidthMm, pageHeightMm)) * 1000
+      );
+      const pageHeightMicrons = Math.round(
+        (preservePageDimensions ? pageHeightMm : Math.max(pageWidthMm, pageHeightMm)) * 1000
+      );
       printWindow.webContents.print(
         {
           silent: true,
           deviceName: printer.name,
           printBackground: true,
           margins: { marginType: "none" },
+          landscape,
+          scaleFactor: 100,
+          pageSize: {
+            width: pageWidthMicrons,
+            height: pageHeightMicrons,
+          },
         },
         (success, failureReason) => {
           if (success) resolve();
@@ -84,19 +215,113 @@ function writeBarcodePdfTemp(pdfBase64) {
   return pdfPath;
 }
 
-ipcMain.handle("hardware:preview-barcode-pdf", async (_event, { pdfBase64 }) => {
+function launchPdfViewer(viewer, pdfPath) {
+  return new Promise((resolve) => {
+    const args = viewer.id === "firefox"
+      ? ["-new-window", pdfPath]
+      : viewer.id === "edge" || viewer.id === "chrome"
+        ? ["--new-window", pdfPath]
+        : [pdfPath];
+    const child = spawn(viewer.executablePath, args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false,
+    });
+    child.once("error", (error) => resolve({ success: false, error: error.message }));
+    child.once("spawn", () => {
+      child.unref();
+      resolve({ success: true });
+    });
+  });
+}
+
+async function openBarcodePdfWithViewers(pdfBase64, viewerIds) {
+  const pdfPath = writeBarcodePdfTemp(pdfBase64);
+  const requestedIds = Array.isArray(viewerIds) && viewerIds.length > 0
+    ? viewerIds
+    : ["system", "adobe", "edge", "chrome", "firefox"];
+  const allowedIds = [...new Set(requestedIds)].filter((id) =>
+    Object.prototype.hasOwnProperty.call(PDF_VIEWER_NAMES, id)
+  );
+  const viewers = detectPdfViewers();
+  const errors = [];
+
+  for (const id of allowedIds) {
+    const viewer = viewers.find((item) => item.id === id);
+    if (!viewer?.installed) {
+      errors.push(`${PDF_VIEWER_NAMES[id]} is not installed`);
+      continue;
+    }
+
+    if (id === "system") {
+      const error = await shell.openPath(pdfPath);
+      if (!error) return { success: true, viewerId: id, viewerName: viewer.name };
+      errors.push(`${viewer.name}: ${error}`);
+      continue;
+    }
+
+    const result = await launchPdfViewer(viewer, pdfPath);
+    if (result.success) return { success: true, viewerId: id, viewerName: viewer.name };
+    errors.push(`${viewer.name}: ${result.error}`);
+  }
+
+  return {
+    success: false,
+    error: errors.join(". ") || "No enabled PDF viewer is available",
+    repairAvailable: true,
+  };
+}
+
+ipcMain.handle("hardware:preview-barcode-pdf", async (_event, { pdfBase64, viewerIds }) => {
   if (typeof pdfBase64 !== "string" || !pdfBase64.trim()) {
     return { success: false, error: "PDF preview is unavailable" };
   }
 
   try {
-    const pdfPath = writeBarcodePdfTemp(pdfBase64);
-    const error = await shell.openPath(pdfPath);
-    if (error) return { success: false, error };
-    return { success: true };
+    return await openBarcodePdfWithViewers(pdfBase64, viewerIds);
   } catch (error) {
     console.error("Unable to preview barcode PDF:", error);
     return { success: false, error: error.message || "Unable to preview barcode PDF" };
+  }
+});
+
+ipcMain.handle("hardware:preview-barcode-html", async (_event, { html, options = {}, viewerIds }) => {
+  if (typeof html !== "string" || !html.trim()) {
+    return { success: false, error: "Barcode preview is unavailable" };
+  }
+
+  const pageWidthMm = Number(options.pageWidthMm || 102);
+  const pageHeightMm = Number(options.pageHeightMm || 25);
+  const previewWindow = new BrowserWindow({
+    show: false,
+    width: Math.max(320, Math.ceil(pageWidthMm * 3.78)),
+    height: Math.max(160, Math.ceil(pageHeightMm * 3.78)),
+    webPreferences: { sandbox: true, backgroundThrottling: false },
+  });
+
+  try {
+    await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    await previewWindow.webContents.executeJavaScript(`
+      new Promise((resolve) => {
+        const afterPaint = () => requestAnimationFrame(() => requestAnimationFrame(resolve));
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(afterPaint).catch(afterPaint);
+        } else {
+          afterPaint();
+        }
+      });
+    `);
+    const pdf = await previewWindow.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+      margins: { top: 0, bottom: 0, left: 0, right: 0 },
+    });
+    return await openBarcodePdfWithViewers(pdf.toString("base64"), viewerIds);
+  } catch (error) {
+    console.error("Unable to create barcode PDF preview:", error);
+    return { success: false, error: error.message || "Unable to create barcode PDF preview" };
+  } finally {
+    if (!previewWindow.isDestroyed()) previewWindow.close();
   }
 });
 
@@ -395,6 +620,7 @@ async function ensureMicrosoftStoreLicense(parentWindow) {
 async function startServer() {
   const port = await findFreePort();
   const userData = app.getPath("userData");
+  const licenseConfig = readLicenseConfig();
   copyInitialDatabaseIfNeeded();
 
   serverProcess = fork(serverPath(), [], {
@@ -404,6 +630,10 @@ async function startServer() {
       PORT: String(port),
       HOSTNAME: "127.0.0.1",
       POS_LOCAL_DB_PATH: path.join(userData, "pos-local-db.sqlite"),
+      ACTIVATION_SERVER_URL:
+        process.env.ACTIVATION_SERVER_URL || licenseConfig.activationServerUrl || "",
+      LICENSE_PUBLIC_KEY_PEM:
+        process.env.LICENSE_PUBLIC_KEY_PEM || licenseConfig.licensePublicKeyPem || "",
       JWT_SECRET: process.env.JWT_SECRET || "offline-pos-local-session-secret-change-before-client-build",
       NODE_ENV: "production",
       ELECTRON_RUN_AS_NODE: "1",

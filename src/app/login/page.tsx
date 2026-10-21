@@ -20,6 +20,21 @@ export default function LoginPage() {
     }
   }, [authLoading, isAuthenticated, router, user]);
 
+  useEffect(() => {
+    if (authLoading || isAuthenticated) return;
+
+    fetch("/api/setup/status", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((status) => {
+        if (status.usersCount === 0) {
+          router.replace("/activate");
+        }
+      })
+      .catch(() => {
+        router.replace("/activate");
+      });
+  }, [authLoading, isAuthenticated, router]);
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
 

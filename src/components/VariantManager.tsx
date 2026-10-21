@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Barcode, Edit, Plus, Trash2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { ProductVariant } from "@/types";
+import { OfflineProductImage } from "@/components/OfflineProductImage";
 import {
   addProductVariant,
   deleteProductVariant,
@@ -14,8 +15,17 @@ import {
 interface VariantManagerProps {
   productId: string;
   variants: ProductVariant[];
+  parentCost?: number;
+  parentPrice?: number;
   onVariantsUpdated: () => void;
   onPrintBarcode?: (variant: ProductVariant) => void;
+  createVariantSku?: (
+    variantType: string,
+    variantValue: string,
+    variantType2?: string,
+    variantValue2?: string
+  ) => string;
+  createVariantBarcode?: () => string;
 }
 
 const VARIANT_TYPES = ["size", "color", "material"];
@@ -34,8 +44,12 @@ function labelVariant(variant: ProductVariant) {
 export const VariantManager = ({
   productId,
   variants,
+  parentCost,
+  parentPrice,
   onVariantsUpdated,
   onPrintBarcode,
+  createVariantSku,
+  createVariantBarcode,
 }: VariantManagerProps) => {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -43,6 +57,8 @@ export const VariantManager = ({
   const [variantValue, setVariantValue] = useState("");
   const [variantType2, setVariantType2] = useState("");
   const [variantValue2, setVariantValue2] = useState("");
+  const [sku, setSku] = useState("");
+  const [barcodeValue, setBarcodeValue] = useState("");
   const [quantity, setQuantity] = useState("");
   const [priceAdjustment, setPriceAdjustment] = useState("");
   const [leastPrice, setLeastPrice] = useState("");
@@ -57,6 +73,8 @@ export const VariantManager = ({
     setVariantValue("");
     setVariantType2("");
     setVariantValue2("");
+    setSku("");
+    setBarcodeValue("");
     setQuantity("");
     setPriceAdjustment("");
     setLeastPrice("");
@@ -89,6 +107,8 @@ export const VariantManager = ({
     setVariantValue(variant.variant_value || "");
     setVariantType2(variant.variant_type_2 || "");
     setVariantValue2(variant.variant_value_2 || "");
+    setSku(variant.sku || "");
+    setBarcodeValue(variant.barcode || "");
     setQuantity(variant.quantity ? String(variant.quantity) : "");
     setPriceAdjustment(variant.price_adjustment ? String(variant.price_adjustment) : "");
     setLeastPrice(variant.least_price ? String(variant.least_price) : "");
@@ -123,8 +143,30 @@ export const VariantManager = ({
       const quantityValue = Math.max(0, Number(quantity || 0));
       const priceAdjustmentValue = Number(priceAdjustment || 0);
       const leastPriceValue = Math.max(0, Number(leastPrice || 0));
+      const parentCostValue = Number(parentCost || 0);
+      const variantSellingPrice = Number(parentPrice || 0) + priceAdjustmentValue;
+      if (
+        leastPriceValue > 0 &&
+        Number.isFinite(parentCostValue) &&
+        Number.isFinite(variantSellingPrice) &&
+        (leastPriceValue < parentCostValue || leastPriceValue > variantSellingPrice)
+      ) {
+        toast.error("Variant least price must be between cost and selling price");
+        return;
+      }
       const secondType = variantType2 || null;
       const secondValue = secondType && variantValue2.trim() ? variantValue2.trim() : null;
+      const finalSku =
+        sku.trim() ||
+        createVariantSku?.(variantType, variantValue, secondType || undefined, secondValue || undefined) ||
+        `${variantType.toUpperCase().slice(0, 2)}-${variantValue.replace(/\s+/g, "").slice(0, 5)}-${Math.random()
+          .toString(36)
+          .slice(2, 6)
+          .toUpperCase()}`;
+      const finalBarcode =
+        barcodeValue.trim() ||
+        createVariantBarcode?.() ||
+        `${Date.now().toString().slice(-8)}${Math.random().toString(36).slice(2, 4).toUpperCase()}`;
 
       const success = editingId
         ? await updateProductVariant(editingId, {
@@ -132,6 +174,8 @@ export const VariantManager = ({
             variant_value: variantValue,
             variant_type_2: secondType,
             variant_value_2: secondValue,
+            sku: finalSku,
+            barcode: finalBarcode,
             quantity: quantityValue,
             price_adjustment: priceAdjustmentValue,
             least_price: leastPriceValue,
@@ -143,8 +187,8 @@ export const VariantManager = ({
               productId,
               variantType,
               variantValue,
-              `${variantType.toUpperCase().slice(0, 2)}-${variantValue.replace(/\s+/g, "").slice(0, 5)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-              `${Date.now().toString().slice(-8)}${Math.random().toString(36).slice(2, 4).toUpperCase()}`,
+              finalSku,
+              finalBarcode,
               quantityValue,
               priceAdjustmentValue,
               leastPriceValue,
@@ -203,10 +247,10 @@ export const VariantManager = ({
               >
                 {variant.image_url && (
                   <div className="w-6 h-6 rounded overflow-hidden bg-white flex-shrink-0">
-                    <img
+                    <OfflineProductImage
                       src={variant.image_url}
                       alt={variant.variant_value}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full"
                     />
                   </div>
                 )}
@@ -269,6 +313,8 @@ export const VariantManager = ({
           <button
             onClick={() => {
               resetForm();
+              setSku(createVariantSku?.("size", "") || "");
+              setBarcodeValue(createVariantBarcode?.() || "");
               setShowForm(true);
             }}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 text-white text-sm rounded font-medium hover:bg-blue-700 transition-colors"
@@ -342,11 +388,55 @@ export const VariantManager = ({
               </div>
             </div>
 
-            {!editingId && (
-              <div className="p-2 bg-blue-50 rounded text-xs text-gray-600 border border-blue-200">
-                SKU and Barcode will be auto-generated
-              </div>
-            )}
+            <div className="grid grid-cols-1 gap-2 rounded border border-blue-200 bg-blue-50 p-2">
+              <label className="block text-xs font-medium text-gray-700">
+                Variant SKU
+                <div className="mt-1 flex gap-2">
+                  <input
+                    type="text"
+                    value={sku}
+                    onChange={(e) => setSku(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                    placeholder="Variant SKU"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSku(
+                        createVariantSku?.(
+                          variantType,
+                          variantValue,
+                          variantType2 || undefined,
+                          variantValue2 || undefined
+                        ) || ""
+                      )
+                    }
+                    className="px-2 py-1.5 rounded bg-white border border-blue-300 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                  >
+                    Generate
+                  </button>
+                </div>
+              </label>
+              <label className="block text-xs font-medium text-gray-700">
+                Variant Barcode
+                <div className="mt-1 flex gap-2">
+                  <input
+                    type="text"
+                    value={barcodeValue}
+                    onChange={(e) => setBarcodeValue(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                    placeholder="Scan, type, or generate barcode"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setBarcodeValue(createVariantBarcode?.() || "")}
+                    className="px-2 py-1.5 rounded bg-white border border-blue-300 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                  >
+                    Generate
+                  </button>
+                </div>
+              </label>
+            </div>
 
             <div className="grid grid-cols-2 gap-2">
               <label className="block text-xs font-medium text-gray-700">
@@ -400,7 +490,7 @@ export const VariantManager = ({
               <input type="file" accept="image/*" onChange={handleImageChange} className="w-full text-xs" />
               {imagePreview && (
                 <div className="mt-2 p-2 bg-white rounded border border-gray-300">
-                  <img src={imagePreview} alt="Preview" className="w-full h-32 object-cover rounded" />
+                  <OfflineProductImage src={imagePreview} alt="Preview" className="w-full h-32 rounded" />
                 </div>
               )}
             </div>
@@ -430,4 +520,3 @@ export const VariantManager = ({
     </div>
   );
 };
-

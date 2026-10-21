@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
@@ -12,14 +13,42 @@ import {
   Truck,
   ReceiptText,
   Building2,
+  Store,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
+import type { BusinessProfile } from "@/types";
 
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
   const { user } = useAuth();
+  const [shopBillingEnabled, setShopBillingEnabled] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    fetch("/api/settings")
+      .then((response) => response.json())
+      .then((result) => {
+        const settings = result.settings as Partial<BusinessProfile> | null;
+        if (active) setShopBillingEnabled(settings?.shopBillingEnabled === true);
+      })
+      .catch(() => {
+        const stored = localStorage.getItem("posSettings");
+        if (!stored) return;
+        try {
+          const settings = JSON.parse(stored) as Partial<BusinessProfile>;
+          if (active) setShopBillingEnabled(settings.shopBillingEnabled === true);
+        } catch {
+          // Keep the feature hidden if settings cannot be read.
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const menuItems =
     user?.role === "cashier"
@@ -32,6 +61,9 @@ export function Sidebar() {
           { href: "/products", label: "Products", icon: Package },
           { href: "/companies", label: "Companies", icon: Building2 },
           { href: "/suppliers", label: "Suppliers", icon: Truck },
+          ...(shopBillingEnabled
+            ? [{ href: "/shops", label: "Shop Accounts", icon: Store }]
+            : []),
           { href: "/accounting", label: "Accounting", icon: ReceiptText },
           { href: "/transactions", label: "Transactions", icon: ShoppingCart },
           ...(user?.role === "admin"
@@ -60,15 +92,15 @@ export function Sidebar() {
         }`}
       >
         <div className="p-6 border-b border-gray-800 sticky top-0 bg-gray-900">
-          <a href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2">
             <ShoppingCart className="w-8 h-8 flex-shrink-0" />
             <h1 className="text-xl font-bold truncate">MSHPOS</h1>
-          </a>
+          </Link>
         </div>
 
         <nav className="p-4 space-y-2">
           {menuItems.map(({ href, label, icon: Icon }) => (
-            <a
+            <Link
               key={href}
               href={href}
               onClick={() => setIsOpen(false)}
@@ -80,7 +112,7 @@ export function Sidebar() {
             >
               <Icon className="w-5 h-5 flex-shrink-0" />
               <span className="text-sm sm:text-base">{label}</span>
-            </a>
+            </Link>
           ))}
         </nav>
       </aside>

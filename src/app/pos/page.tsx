@@ -4,6 +4,7 @@ import { MainLayout } from "@/components/layout";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Trash2, Printer, Check, X, Barcode, Eye, ArrowLeft, ShoppingCart, RotateCcw } from "lucide-react";
 import toast from "react-hot-toast";
+import { getOfflineImageSrc, OfflineProductImage } from "@/components/OfflineProductImage";
 import { supabase, fetchProductsWithVariants, findVariantByBarcode } from "@/lib/supabase";
 import { BusinessProfile, ProductVariant } from "@/types";
 import { DEFAULT_CURRENCY, discountUnitLabel, formatCurrency } from "@/lib/currency";
@@ -21,8 +22,13 @@ import {
 
 interface CartItem {
   id: string;
+  product_id: string;
   name: string;
   price: number;
+  originalPrice: number;
+  minimumUnitPrice: number;
+  leastPrice?: number;
+  leastPriceCode?: string;
   quantity: number;
   image_url: string;
   discount: number;
@@ -39,6 +45,8 @@ interface Product {
   name: string;
   price: number;
   cost: number;
+  least_price?: number;
+  least_price_code?: string;
   category: string;
   quantity: number;
   image_url: string;
@@ -75,11 +83,28 @@ interface ReceiptPreview {
   items: CartItem[];
   subtotal: number;
   discount: number;
+  tax: number;
   total: number;
   paymentMethod: string;
   amountPaid?: number;
   balanceAmount?: number;
+  dueAmount?: number;
+  customerName?: string | null;
+  saleType?: "walk_in" | "shop";
+  paymentStatus?: "paid" | "partial" | "unpaid";
   status: "draft" | "completed";
+}
+
+interface ShopAccount {
+  id: string;
+  name: string;
+  phone?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  total_billed: number;
+  total_paid: number;
+  due_amount: number;
+  payment_status: "paid" | "partial" | "unpaid";
 }
 
 const defaultReceiptSettings: BusinessProfile = {
@@ -100,6 +125,15 @@ const defaultReceiptSettings: BusinessProfile = {
   receiptFooterMode: "return_days",
   receiptFooterDays: 7,
   receiptFooterText: "",
+  allowTransactionDelete: false,
+  posSetPriceRule: "least_price",
+  billBarcodeEnabled: true,
+  returnBarcodeEnabled: true,
+  replacementBarcodeEnabled: true,
+  replacementStockProtectionEnabled: true,
+  partialReturnProtectionEnabled: true,
+  taxCalculationEnabled: false,
+  shopBillingEnabled: false,
 };
 
 type HardwareBridge = {
@@ -136,6 +170,12 @@ function POSContent() {
   const [receiptSettings, setReceiptSettings] =
     useState<BusinessProfile>(defaultReceiptSettings);
   const [receiptPreview, setReceiptPreview] = useState<ReceiptPreview | null>(null);
+  const [setPriceInputs, setSetPriceInputs] = useState<Record<string, string>>({});
+  const [shopAccounts, setShopAccounts] = useState<ShopAccount[]>([]);
+  const [saleType, setSaleType] = useState<"walk_in" | "shop">("walk_in");
+  const [selectedShopId, setSelectedShopId] = useState("");
+  const [newShopName, setNewShopName] = useState("");
+  const [newShopPhone, setNewShopPhone] = useState("");
   
   // NEW: Returns mode state
   const [transactionId, setTransactionId] = useState("");
@@ -177,6 +217,54 @@ function POSContent() {
     }
     return `Return allowed within ${days} day${days === 1 ? "" : "s"}.`;
   }, [receiptSettings]);
+  const receiptLogoImage = getOfflineImageSrc(receiptSettings.logoImage);
+  const posSetPriceRule = receiptSettings.posSetPriceRule || "least_price";
+  const billBarcodeEnabled = receiptSettings.billBarcodeEnabled !== false;
+  const returnBarcodeEnabled = receiptSettings.returnBarcodeEnabled !== false;
+  const replacementBarcodeEnabled = receiptSettings.replacementBarcodeEnabled !== false;
+  const replacementStockProtectionEnabled = receiptSettings.replacementStockProtectionEnabled !== false;
+  const partialReturnProtectionEnabled = receiptSettings.partialReturnProtectionEnabled !== false;
+  const taxCalculationEnabled = receiptSettings.taxCalculationEnabled === true;
+  const shopBillingEnabled = receiptSettings.shopBillingEnabled === true;
+  const isShopSale = shopBillingEnabled && saleType === "shop";
+  const selectedShop = shopAccounts.find((shop) => shop.id === selectedShopId) || null;
+  const activeShopName = (selectedShop?.name || newShopName).trim();
+  const minimumUnitPriceForProduct = (product: Product, variant?: ProductVariant | null) => {
+    if (posSetPriceRule === "below_cost") {
+      return 0;
+    }
+
+    const cost = Math.max(0, Number(product.cost || 0));
+    if (posSetPriceRule === "cost") {
+      return cost;
+    }
+
+    return Math.max(0, Number(variant?.least_price || product.least_price || cost));
+  };
+  const minimumLineTotal = (item: CartItem, quantity = item.quantity) =>
+    Math.max(0, Number(item.minimumUnitPrice || 0) * Number(quantity || 0));
+  const maxDiscountForLine = (item: CartItem, price = item.price, quantity = item.quantity) =>
+    Math.max(0, Number(price || 0) * Number(quantity || 0) - minimumLineTotal(item, quantity));
+  const capLineDiscount = (
+    item: CartItem,
+    rawDiscount = item.discount,
+    discountType = item.discountType,
+    price = item.price,
+    quantity = item.quantity
+  ) => {
+    const validDiscount = Math.max(0, Number(rawDiscount || 0));
+    const itemTotal = Number(price || 0) * Number(quantity || 0);
+    const maxDiscount = maxDiscountForLine(item, price, quantity);
+
+    if (discountType === "percentage") {
+      const maxPct = itemTotal > 0 ? (maxDiscount / itemTotal) * 100 : 0;
+      return Math.min(99.99, maxPct, validDiscount);
+    }
+
+    return Math.min(maxDiscount, validDiscount);
+  };
+  const cartMinimumTotal = (items = cart) =>
+    items.reduce((sum, item) => sum + minimumLineTotal(item), 0);
 
   const fetchProducts = useCallback(async (isActive: () => boolean = () => true) => {
     try {
@@ -197,19 +285,47 @@ function POSContent() {
     }
   }, []);
 
+  const fetchShopAccounts = useCallback(async (isActive: () => boolean = () => true) => {
+    const { data, error } = await supabase
+      .from("shop_accounts")
+      .select("*")
+      .order("name", { ascending: true });
+
+    if (!error && isActive()) {
+      setShopAccounts((data || []) as ShopAccount[]);
+    }
+  }, []);
+
   const filteredProducts = useMemo(() => {
     if (!barcodeInput.trim()) {
       return products;
     }
 
     const searchLower = barcodeInput.toLowerCase();
-    return products.filter(
-      (product) =>
+    return products.filter((product) => {
+      const productMatches =
         product.barcode.toLowerCase().includes(searchLower) ||
         product.name.toLowerCase().includes(searchLower) ||
         product.sku.toLowerCase().includes(searchLower) ||
-        product.category.toLowerCase().includes(searchLower)
-    );
+        product.category.toLowerCase().includes(searchLower);
+
+      const variantMatches = (product.variants || []).some((variant) =>
+        [
+          variant.variant_value,
+          variant.variant_value_2,
+          variant.sku,
+          variant.barcode,
+          `${variant.variant_type}: ${variant.variant_value}`,
+          variant.variant_type_2 && variant.variant_value_2
+            ? `${variant.variant_type_2}: ${variant.variant_value_2}`
+            : "",
+        ]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(searchLower))
+      );
+
+      return productMatches || variantMatches;
+    });
   }, [barcodeInput, products]);
 
   // Fetch products with variants from local offline storage
@@ -217,11 +333,12 @@ function POSContent() {
     let active = true;
 
     fetchProducts(() => active);
+    fetchShopAccounts(() => active);
 
     return () => {
       active = false;
     };
-  }, [fetchProducts]);
+  }, [fetchProducts, fetchShopAccounts]);
 
   useEffect(() => {
     let active = true;
@@ -255,7 +372,10 @@ function POSContent() {
     }
 
     try {
-      const result = await fetchReturnableTransactionWithItems(transactionId);
+      const result = await fetchReturnableTransactionWithItems(
+        transactionId,
+        partialReturnProtectionEnabled
+      );
       if (!result.ok) {
         const message =
           result.reason === "non_returnable"
@@ -375,7 +495,7 @@ function POSContent() {
       // Step 3: If there are replacements, add them
       if (replacementCart.length > 0) {
         const replacementItems = replacementCart.map((item) => ({
-          product_id: item.variant_id ? item.id.split("-")[0] : item.id,
+          product_id: item.product_id,
           variant_id: item.variant_id || undefined,
           quantity: item.quantity,
           replacement_price: item.price * item.quantity,
@@ -392,12 +512,13 @@ function POSContent() {
         }
 
         // Create replacement transaction
-        const { globalDiscount, total } = calculateReplacementTotals();
+        const { globalDiscount, taxAmount: replacementTaxAmount, total } = calculateReplacementTotals();
         const txn = await createReplacementTransaction(
           returnRecord.id,
           total,
           globalDiscount,
-          paymentMethod
+          paymentMethod,
+          replacementTaxAmount
         );
 
         if (!txn) {
@@ -415,7 +536,7 @@ function POSContent() {
                 : Math.min(itemTotal, item.discount);
 
             return {
-              product_id: item.variant_id ? item.id.split("-")[0] : item.id,
+              product_id: item.product_id,
               variant_id: item.variant_id ?? null,
               quantity: item.quantity,
               unit_price: item.price,
@@ -470,7 +591,11 @@ function POSContent() {
       subtotal += Math.max(0, itemTotal - itemDiscount);
     });
 
-    return { subtotal, globalDiscount: 0, total: Math.max(0, subtotal) };
+    const taxableTotal = Math.max(0, subtotal);
+    const taxAmount = taxCalculationEnabled
+      ? Math.max(0, taxableTotal * (Number(receiptSettings.taxRate || 0) / 100))
+      : 0;
+    return { subtotal, globalDiscount: 0, taxAmount, total: taxableTotal + taxAmount };
   };
 
   const restockReturnedItems = async (
@@ -521,6 +646,10 @@ function POSContent() {
           .find((v) => v.id === item.variant_id);
 
         if (variant) {
+          if (replacementStockProtectionEnabled && variant.quantity < item.quantity) {
+            toast.error(`Only ${variant.quantity} available for ${item.name}`);
+            return false;
+          }
           const { error } = await supabase
             .from("product_variants")
             .update({ quantity: variant.quantity - item.quantity, updated_at: new Date().toISOString() })
@@ -534,12 +663,16 @@ function POSContent() {
           return false;
         }
       } else {
-        const product = products.find((p) => p.id === item.id);
+        const product = products.find((p) => p.id === item.product_id);
         if (product) {
+          if (replacementStockProtectionEnabled && product.quantity < item.quantity) {
+            toast.error(`Only ${product.quantity} available for ${item.name}`);
+            return false;
+          }
           const { error } = await supabase
             .from("products")
             .update({ quantity: product.quantity - item.quantity, updated_at: new Date().toISOString() })
-            .eq("id", item.id);
+            .eq("id", item.product_id);
 
           if (error) {
             console.error("Error updating replacement product quantity:", error);
@@ -660,6 +793,16 @@ function POSContent() {
 
   const handleBarcodeInput = async (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (mode === "sale" && !billBarcodeEnabled) {
+        toast.error("Bill barcode scanning is disabled in settings");
+        return;
+      }
+      if (mode === "returns" && !replacementBarcodeEnabled) {
+        toast.error("Replacement barcode scanning is disabled in settings");
+        return;
+      }
       const scannedValue = barcodeValueRef.current.trim();
       const scanStartedAt = scannerInputStartedAtRef.current;
       const isRapidScan =
@@ -681,8 +824,13 @@ function POSContent() {
       if (variant) {
         const product = products.find((p) => p.id === variant.product_id);
         if (product) {
-          addToCartWithVariant(product, variant);
-          toast.success(`Added ${product.name} - ${variant.variant_value}`);
+          if (mode === "returns") {
+            addVariantToReplacementCart(product, variant);
+            toast.success(`Added replacement ${product.name} - ${variant.variant_value}`);
+          } else {
+            addToCartWithVariant(product, variant);
+            toast.success(`Added ${product.name} - ${variant.variant_value}`);
+          }
           barcodeValueRef.current = "";
           setBarcodeInput("");
           return;
@@ -704,8 +852,13 @@ function POSContent() {
           setShowVariantSelector(true);
         } else {
           // No variants, add directly
-          addToCart(product);
-          toast.success(`Added ${product.name}`);
+          if (mode === "returns") {
+            addToReplacementCart(product);
+            toast.success(`Added replacement ${product.name}`);
+          } else {
+            addToCart(product);
+            toast.success(`Added ${product.name}`);
+          }
         }
         barcodeValueRef.current = "";
         setBarcodeInput("");
@@ -740,12 +893,19 @@ function POSContent() {
       }
 
       const variantPrice = product.price + variant.price_adjustment;
+      const leastPrice = Number(variant.least_price || product.least_price || 0);
+      const minimumUnitPrice = minimumUnitPriceForProduct(product, variant);
       return [
         ...prevCart,
         {
           id: cartItemId,
+          product_id: product.id,
           name: product.name,
           price: variantPrice,
+          originalPrice: variantPrice,
+          minimumUnitPrice,
+          leastPrice,
+          leastPriceCode: variant.least_price_code || product.least_price_code || "",
           quantity: 1,
           image_url: product.image_url,
           discount: 0,
@@ -785,8 +945,13 @@ function POSContent() {
         ...prevCart,
         {
           id: product.id,
+          product_id: product.id,
           name: product.name,
           price: product.price,
+          originalPrice: product.price,
+          minimumUnitPrice: minimumUnitPriceForProduct(product),
+          leastPrice: Number(product.least_price || 0),
+          leastPriceCode: product.least_price_code || "",
           quantity: 1,
           image_url: product.image_url,
           discount: 0,
@@ -826,8 +991,50 @@ function POSContent() {
 
     setCart((prevCart) =>
       prevCart.map((item) =>
-        item.id === id ? { ...item, quantity: validQty } : item
+        item.id === id
+          ? { ...item, quantity: validQty, discount: capLineDiscount(item, item.discount, item.discountType, item.price, validQty) }
+          : item
       )
+    );
+  };
+
+  const updateSetPriceInput = (id: string, rawValue: string) => {
+    setSetPriceInputs((prev) => ({ ...prev, [id]: rawValue }));
+  };
+
+  const commitSetPrice = (id: string, rawValue: string) => {
+    setSetPriceInputs((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
+    setCart((prevCart) =>
+      prevCart.map((item) => {
+        if (item.id !== id) return item;
+
+        const originalPrice = Number(item.originalPrice || item.price || 0);
+        const nextPrice = rawValue === "" ? originalPrice : Number(rawValue);
+
+        if (!Number.isFinite(nextPrice) || nextPrice < 0) {
+          toast.error("Enter a valid set price");
+          return item;
+        }
+
+        if (nextPrice < item.minimumUnitPrice) {
+          toast.error(`Set price cannot be below ${money(item.minimumUnitPrice)}`);
+          return item;
+        }
+
+        if (nextPrice > originalPrice) {
+          toast.error("Set price cannot be above original price");
+          return item;
+        }
+
+        const discount = capLineDiscount(item, item.discount, item.discountType, nextPrice);
+
+        return { ...item, price: nextPrice, originalPrice, discount };
+      })
     );
   };
 
@@ -836,17 +1043,7 @@ function POSContent() {
       prevCart.map((item) => {
         if (item.id !== id) return item;
 
-        const itemTotal = item.price * item.quantity;
-        let validDiscount = Math.max(0, discount);
-
-        // Validate based on discount type
-        if (item.discountType === "percentage") {
-          // Percentage discount can't be >= 100
-          validDiscount = Math.min(99.99, validDiscount);
-        } else {
-          // Amount discount can't exceed item total
-          validDiscount = Math.min(itemTotal, validDiscount);
-        }
+        const validDiscount = capLineDiscount(item, discount);
 
         return { ...item, discount: validDiscount };
       })
@@ -858,17 +1055,7 @@ function POSContent() {
       prevCart.map((item) => {
         if (item.id !== id) return item;
 
-        const itemTotal = item.price * item.quantity;
-        let validDiscount = item.discount;
-
-        // Validate discount for the new type
-        if (type === "percentage") {
-          // If switching to percentage, ensure it's < 100
-          validDiscount = Math.min(99.99, validDiscount);
-        } else {
-          // If switching to amount, ensure it doesn't exceed item total
-          validDiscount = Math.min(itemTotal, validDiscount);
-        }
+        const validDiscount = capLineDiscount(item, item.discount, type);
 
         return { ...item, discountType: type, discount: validDiscount };
       })
@@ -877,6 +1064,104 @@ function POSContent() {
 
   const removeFromCart = (id: string) => {
     setCart((prevCart) => prevCart.filter((item) => item.id !== id));
+    setSetPriceInputs((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const addToReplacementCart = (product: Product) => {
+    const existingItem = replacementCart.find((item) => item.id === product.id);
+    const currentQty = existingItem?.quantity || 0;
+    if (replacementStockProtectionEnabled && product.quantity - currentQty <= 0) {
+      toast.error("Product out of stock");
+      return;
+    }
+
+    if (existingItem) {
+      setReplacementCart((items) =>
+        items.map((item) =>
+          item.id === product.id
+            ? {
+                ...item,
+                quantity: replacementStockProtectionEnabled
+                  ? Math.min(product.quantity, item.quantity + 1)
+                  : item.quantity + 1,
+              }
+            : item
+        )
+      );
+      return;
+    }
+
+    setReplacementCart((items) => [
+      ...items,
+      {
+        id: product.id,
+        product_id: product.id,
+        name: product.name,
+        price: product.price,
+        originalPrice: product.price,
+        minimumUnitPrice: minimumUnitPriceForProduct(product),
+        leastPrice: Number(product.least_price || 0),
+        leastPriceCode: product.least_price_code || "",
+        quantity: 1,
+        image_url: product.image_url,
+        discount: 0,
+        discountType: "lkr",
+      },
+    ]);
+  };
+
+  const addVariantToReplacementCart = (product: Product, variant: ProductVariant) => {
+    const cartItemId = `${product.id}-${variant.id}`;
+    const existingItem = replacementCart.find((item) => item.id === cartItemId);
+    const currentQty = existingItem?.quantity || 0;
+    if (replacementStockProtectionEnabled && variant.quantity - currentQty <= 0) {
+      toast.error("Variant out of stock");
+      return;
+    }
+
+    if (existingItem) {
+      setReplacementCart((items) =>
+        items.map((item) =>
+          item.id === cartItemId
+            ? {
+                ...item,
+                quantity: replacementStockProtectionEnabled
+                  ? Math.min(variant.quantity, item.quantity + 1)
+                  : item.quantity + 1,
+              }
+            : item
+        )
+      );
+      return;
+    }
+
+    const variantPrice = product.price + variant.price_adjustment;
+    setReplacementCart((items) => [
+      ...items,
+      {
+        id: cartItemId,
+        product_id: product.id,
+        name: product.name,
+        price: variantPrice,
+        originalPrice: variantPrice,
+        minimumUnitPrice: minimumUnitPriceForProduct(product, variant),
+        leastPrice: Number(variant.least_price || product.least_price || 0),
+        leastPriceCode: variant.least_price_code || product.least_price_code || "",
+        quantity: 1,
+        image_url: product.image_url,
+        discount: 0,
+        discountType: "lkr",
+        variant_id: variant.id,
+        variant_type: variant.variant_type,
+        variant_value: variant.variant_value,
+        variant_type_2: variant.variant_type_2,
+        variant_value_2: variant.variant_value_2,
+      },
+    ]);
   };
 
   const calculateTotals = () => {
@@ -885,7 +1170,7 @@ function POSContent() {
     // Calculate subtotal with individual item discounts (robust to bad input)
     cart.forEach((item) => {
       const itemTotal = Number(item.price || 0) * Number(item.quantity || 0);
-      const rawDiscount = Number(item.discount ?? 0);
+      const rawDiscount = capLineDiscount(item);
       let itemDiscount = 0;
 
       if (item.discountType === "percentage") {
@@ -901,20 +1186,87 @@ function POSContent() {
 
     // Apply global discount safely
     const rawGlobal = Number(discount ?? 0);
+    const minimumTotal = cartMinimumTotal();
+    const maxGlobalDiscount = Math.max(0, subtotal - minimumTotal);
     let globalDiscount = 0;
     if (discountType === "percentage") {
       const pct = isFinite(rawGlobal) ? rawGlobal : 0;
-      globalDiscount = Math.min(subtotal, (subtotal * pct) / 100);
+      globalDiscount = Math.min(maxGlobalDiscount, (subtotal * pct) / 100);
     } else {
       const amountDiscount = isFinite(rawGlobal) ? rawGlobal : 0;
-      globalDiscount = Math.min(subtotal, amountDiscount);
+      globalDiscount = Math.min(maxGlobalDiscount, amountDiscount);
     }
 
-    const total = Math.max(0, subtotal - globalDiscount);
-    return { subtotal, globalDiscount, total };
+    const taxableTotal = Math.max(minimumTotal, subtotal - globalDiscount);
+    const taxAmount = taxCalculationEnabled
+      ? Math.max(0, taxableTotal * (Number(receiptSettings.taxRate || 0) / 100))
+      : 0;
+    const total = taxableTotal + taxAmount;
+    return { subtotal, globalDiscount, taxableTotal, taxAmount, total };
   };
 
-  const { subtotal, globalDiscount, total } = calculateTotals();
+  const { subtotal, globalDiscount, taxableTotal, taxAmount, total } = calculateTotals();
+
+  const paymentStatusFor = (paid: number, saleTotal: number): "paid" | "partial" | "unpaid" => {
+    const due = Math.max(0, saleTotal - paid);
+    if (due <= 0) return "paid";
+    return paid > 0 ? "partial" : "unpaid";
+  };
+
+  const updateShopTotals = async (shopId: string, billedDelta: number, paidDelta: number) => {
+    const { data } = await supabase.from("shop_accounts").select("*").eq("id", shopId).maybeSingle();
+    const shop = data as ShopAccount | null;
+    if (!shop) return;
+
+    const totalBilled = Number(shop.total_billed || 0) + billedDelta;
+    const totalPaid = Number(shop.total_paid || 0) + paidDelta;
+    const dueAmount = Math.max(0, totalBilled - totalPaid);
+    await supabase
+      .from("shop_accounts")
+      .update({
+        total_billed: totalBilled,
+        total_paid: totalPaid,
+        due_amount: dueAmount,
+        payment_status: paymentStatusFor(totalPaid, totalBilled),
+      })
+      .eq("id", shopId);
+  };
+
+  const resolveShopAccount = async () => {
+    if (!isShopSale) return null;
+    if (selectedShop) return selectedShop;
+
+    const name = newShopName.trim();
+    if (!name) return null;
+
+    const existing = shopAccounts.find((shop) => shop.name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) return existing;
+
+    const { data, error } = await supabase
+      .from("shop_accounts")
+      .insert([
+        {
+          name,
+          phone: newShopPhone.trim(),
+          address: "",
+          notes: "",
+          total_billed: 0,
+          total_paid: 0,
+          due_amount: 0,
+          payment_status: "unpaid",
+        },
+      ])
+      .select();
+
+    if (error) {
+      toast.error("Failed to create shop account");
+      return null;
+    }
+
+    const shop = ((data || [])[0] as ShopAccount | undefined) || null;
+    await fetchShopAccounts();
+    return shop;
+  };
 
   const handleCheckout = async () => {
     if (cart.length === 0) {
@@ -922,10 +1274,33 @@ function POSContent() {
       return;
     }
 
-    const paid = paymentMethod === "cash" ? Number(amountPaid || 0) : total;
-    const balance = paymentMethod === "cash" ? Math.max(0, paid - total) : 0;
-    if (paymentMethod === "cash" && paid < total) {
+    const belowMinimumItem = cart.find((item) => Number(item.price || 0) < Number(item.minimumUnitPrice || 0));
+    if (belowMinimumItem) {
+      toast.error(`${belowMinimumItem.name} cannot be sold below ${money(belowMinimumItem.minimumUnitPrice)}`);
+      return;
+    }
+
+    if (taxableTotal < cartMinimumTotal()) {
+      toast.error("Discount cannot reduce the sale below the allowed minimum price");
+      return;
+    }
+
+    const shopAccount = await resolveShopAccount();
+    if (isShopSale && !shopAccount) {
+      toast.error("Shop name is required");
+      return;
+    }
+
+    const paid = isShopSale || paymentMethod === "cash" ? Number(amountPaid || 0) : total;
+    const dueAmount = isShopSale ? Math.max(0, total - paid) : 0;
+    const balance = isShopSale ? 0 : paymentMethod === "cash" ? Math.max(0, paid - total) : 0;
+    const paymentStatus = isShopSale ? paymentStatusFor(paid, total) : "paid";
+    if (!isShopSale && paymentMethod === "cash" && paid < total) {
       toast.error("Customer money is less than the total");
+      return;
+    }
+    if (isShopSale && paid > total) {
+      toast.error("Shop payment cannot exceed the bill total");
       return;
     }
 
@@ -938,7 +1313,7 @@ function POSContent() {
             transaction_date: new Date().toISOString().split('T')[0],
             total_amount: total,
             discount_amount: globalDiscount,
-            tax_amount: 0,
+            tax_amount: taxAmount,
             amount_paid: paid,
             balance_amount: balance,
             payment_method: paymentMethod,
@@ -947,6 +1322,11 @@ function POSContent() {
             user_id: null,
             is_replacement_transaction: false,
             original_return_id: null,
+            shop_id: shopAccount?.id || null,
+            customer_name: shopAccount?.name || null,
+            sale_type: isShopSale ? "shop" : "walk_in",
+            payment_status: paymentStatus,
+            due_amount: dueAmount,
           },
         ])
         .select();
@@ -964,20 +1344,23 @@ function POSContent() {
           const itemTotal = item.price * item.quantity;
           let itemDiscount = 0;
           
+          const safeDiscount = capLineDiscount(item);
+
           if (item.discountType === "percentage") {
-            itemDiscount = (itemTotal * item.discount) / 100;
+            itemDiscount = (itemTotal * safeDiscount) / 100;
           } else {
-            itemDiscount = item.discount;
+            itemDiscount = safeDiscount;
           }
+          const lineSubtotal = Math.max(minimumLineTotal(item), itemTotal - itemDiscount);
           
           return {
             transaction_id: transactionId,
-            product_id: item.variant_id ? item.id.split("-")[0] : item.id, // Extract product ID if variant
+            product_id: item.product_id,
             variant_id: item.variant_id ?? null,
             quantity: item.quantity,
             unit_price: item.price,
             discount: itemDiscount,
-            subtotal: itemTotal - itemDiscount,
+            subtotal: lineSubtotal,
           };
         });
 
@@ -989,6 +1372,23 @@ function POSContent() {
           console.error("Error saving transaction items:", itemsError);
           toast.error("Failed to save transaction items");
           return;
+        }
+
+        if (isShopSale && shopAccount) {
+          await updateShopTotals(shopAccount.id, total, paid);
+          if (paid > 0) {
+            await supabase.from("shop_payments").insert([
+              {
+                shop_id: shopAccount.id,
+                transaction_id: transactionId,
+                payment_date: new Date().toISOString(),
+                amount: paid,
+                payment_method: paymentMethod,
+                notes: "Initial payment",
+              },
+            ]);
+          }
+          await fetchShopAccounts();
         }
 
         // Update product/variant quantities
@@ -1037,10 +1437,15 @@ function POSContent() {
         items: cart.map((item) => ({ ...item })),
         subtotal,
         discount: globalDiscount,
+        tax: taxAmount,
         total,
         paymentMethod,
         amountPaid: paid,
         balanceAmount: balance,
+        dueAmount,
+        customerName: shopAccount?.name || null,
+        saleType: isShopSale ? "shop" : "walk_in",
+        paymentStatus,
         status: "completed",
       };
 
@@ -1049,6 +1454,10 @@ function POSContent() {
       setDiscount(0);
       setDiscountType("lkr");
       setAmountPaid(0);
+      setSaleType("walk_in");
+      setSelectedShopId("");
+      setNewShopName("");
+      setNewShopPhone("");
       barcodeInputRef.current?.focus();
 
       setReceiptPreview(completedReceipt);
@@ -1070,10 +1479,15 @@ function POSContent() {
       items: cart.map((item) => ({ ...item })),
       subtotal,
       discount: globalDiscount,
+      tax: taxAmount,
       total,
       paymentMethod,
-      amountPaid: paymentMethod === "cash" ? Number(amountPaid || 0) : total,
-      balanceAmount: paymentMethod === "cash" ? Math.max(0, Number(amountPaid || 0) - total) : 0,
+      amountPaid: isShopSale || paymentMethod === "cash" ? Number(amountPaid || 0) : total,
+      balanceAmount: isShopSale ? 0 : paymentMethod === "cash" ? Math.max(0, Number(amountPaid || 0) - total) : 0,
+      dueAmount: isShopSale ? Math.max(0, total - Number(amountPaid || 0)) : 0,
+      customerName: isShopSale ? activeShopName : null,
+      saleType: isShopSale ? "shop" : "walk_in",
+      paymentStatus: isShopSale ? paymentStatusFor(Number(amountPaid || 0), total) : "paid",
       status: "draft",
     };
   };
@@ -1089,13 +1503,13 @@ function POSContent() {
 
   const receiptItemSubtotal = (item: CartItem) => {
     const itemTotal = Number(item.price || 0) * Number(item.quantity || 0);
-    const rawDiscount = Number(item.discount ?? 0);
+    const rawDiscount = capLineDiscount(item);
     const itemDiscount =
       item.discountType === "percentage"
         ? (itemTotal * rawDiscount) / 100
         : Math.min(itemTotal, rawDiscount);
 
-    return Math.max(0, itemTotal - itemDiscount);
+    return Math.max(minimumLineTotal(item), itemTotal - itemDiscount);
   };
 
   const buildReceiptHtml = (receipt: ReceiptPreview) => {
@@ -1147,7 +1561,7 @@ function POSContent() {
           <div class="receipt">
             ${showReceiptBusinessInfo ? `
               <div class="center">
-                ${receiptSettings.logoImage ? `<img class="logo" src="${receiptSettings.logoImage}" alt="Logo" />` : ""}
+                ${receiptLogoImage ? `<img class="logo" src="${receiptLogoImage}" alt="Logo" />` : ""}
                 <div class="title">${receiptSettings.businessName}</div>
                 <div class="muted">${receiptSettings.address}</div>
                 <div class="muted">${receiptSettings.phone}</div>
@@ -1157,8 +1571,13 @@ function POSContent() {
             ` : ""}
             <div class="line"><span>Bill</span><span>${receipt.transactionId}</span></div>
             <div class="line"><span>Date</span><span>${new Date(receipt.transactionDate).toLocaleString()}</span></div>
+            ${receipt.saleType === "shop" ? `<div class="line"><span>Shop</span><span>${receipt.customerName || ""}</span></div>` : ""}
             <div class="line"><span>Payment</span><span>${receipt.paymentMethod}</span></div>
-            ${receipt.paymentMethod === "cash" ? `
+            ${receipt.saleType === "shop" ? `
+              <div class="line"><span>Status</span><span>${receipt.paymentStatus || "paid"}</span></div>
+              <div class="line"><span>Paid</span><span>${money(Math.round(receipt.amountPaid || 0))}</span></div>
+              <div class="line"><span>Due</span><span>${money(Math.round(receipt.dueAmount || 0))}</span></div>
+            ` : receipt.paymentMethod === "cash" ? `
               <div class="line"><span>Received</span><span>${money(Math.round(receipt.amountPaid || 0))}</span></div>
               <div class="line"><span>Balance</span><span>${money(Math.round(receipt.balanceAmount || 0))}</span></div>
             ` : ""}
@@ -1167,6 +1586,7 @@ function POSContent() {
             <div class="divider"></div>
             <div class="line"><span>Subtotal</span><span>${money(Math.round(receipt.subtotal))}</span></div>
             <div class="line"><span>Discount</span><span>${money(Math.round(receipt.discount))}</span></div>
+            ${taxCalculationEnabled ? `<div class="line"><span>Tax</span><span>${money(Math.round(receipt.tax))}</span></div>` : ""}
             <div class="line total"><span>Total</span><span>${money(Math.round(receipt.total))}</span></div>
             <div class="divider"></div>
             ${receiptFooterText ? `<div class="center muted">${receiptFooterText}</div>` : ""}
@@ -1233,19 +1653,21 @@ function POSContent() {
               <input
                 ref={barcodeInputRef}
                 type="text"
-                placeholder="Scan barcode or search..."
+                placeholder={billBarcodeEnabled ? "Scan barcode or search..." : "Search products..."}
                 value={barcodeInput}
                 onChange={(e) => handleBarcodeChange(e.target.value)}
-                onKeyDown={handleBarcodeInput}
+                onKeyDown={billBarcodeEnabled ? handleBarcodeInput : undefined}
                 className="input-base flex-1"
               />
-              <button
-                onClick={checkBarcodeReader}
-                className="btn-primary"
-                title="Check scanner"
-              >
-                <Barcode className="w-5 h-5" />
-              </button>
+              {billBarcodeEnabled && (
+                <button
+                  onClick={checkBarcodeReader}
+                  className="btn-primary"
+                  title="Check scanner"
+                >
+                  <Barcode className="w-5 h-5" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -1277,15 +1699,10 @@ function POSContent() {
                     className="card-hover p-3 text-left relative group rounded-lg bg-white shadow-md hover:shadow-lg transition-shadow"
                   >
                     <div className="w-full h-32 bg-gray-200 rounded mb-3 overflow-hidden relative">
-                      <img
-                        src={product.image_url && product.image_url.startsWith('data:') 
-                          ? product.image_url 
-                          : (product.image_url || "https://via.placeholder.com/150?text=No+Image")}
-                        onError={(e) => {
-                          e.currentTarget.src = "https://via.placeholder.com/150?text=No+Image";
-                        }}
+                      <OfflineProductImage
+                        src={product.image_url}
                         alt={product.name}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full"
                       />
                       <button
                         onClick={() => setSelectedProduct(product)}
@@ -1371,6 +1788,49 @@ function POSContent() {
                           className="w-12 px-2 py-1 border border-gray-300 rounded text-sm"
                         />
                       </div>
+                      <div className="mb-2">
+                        <label className="mb-1 block text-xs font-medium text-gray-600">
+                          Set Price
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min="0"
+                            max={item.originalPrice}
+                            step="0.01"
+                            placeholder={String(item.originalPrice)}
+                            value={
+                              setPriceInputs[item.id] ??
+                              (item.price === item.originalPrice ? "" : String(item.price))
+                            }
+                            onChange={(e) => updateSetPriceInput(item.id, e.target.value)}
+                            onBlur={(e) => commitSetPrice(item.id, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                          />
+                          {item.price !== item.originalPrice && (
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => commitSetPrice(item.id, "")}
+                              title="Reset to original price"
+                              className="px-2 py-1 text-xs font-medium text-blue-700 border border-blue-200 rounded hover:bg-blue-50"
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
+                        {item.leastPrice && item.leastPrice > 0 ? (
+                          <p className="mt-1 text-xs text-gray-500">
+                            Least: {money(item.leastPrice)}
+                            {item.leastPriceCode ? ` (${item.leastPriceCode})` : ""}
+                          </p>
+                        ) : null}
+                      </div>
                       <div className="flex gap-2 mb-2">
                         <input
                           type="number"
@@ -1379,17 +1839,7 @@ function POSContent() {
                           value={item.discount ? String(item.discount) : ""}
                           onChange={(e) => {
                             const val = e.target.value === "" ? 0 : Number(e.target.value) || 0;
-                            const itemTotal = item.price * item.quantity;
-                            let validDiscount = Math.max(0, val);
-
-                            // Validate based on discount type
-                            if (item.discountType === "percentage") {
-                              // Percentage discount can't be >= 100
-                              validDiscount = Math.min(99.99, validDiscount);
-                            } else {
-                              // Amount discount can't exceed item total
-                              validDiscount = Math.min(itemTotal, validDiscount);
-                            }
+                            const validDiscount = capLineDiscount(item, val);
 
                             updateDiscount(item.id, validDiscount);
                           }}
@@ -1409,7 +1859,7 @@ function POSContent() {
                       <p className="text-sm font-semibold text-gray-900">
                         Subtotal: {money((() => {
                           const itemTotal = Number(item.price || 0) * Number(item.quantity || 0);
-                          const rawDiscount = Number(item.discount ?? 0);
+                          const rawDiscount = capLineDiscount(item);
                           let itemDiscount = 0;
                           if (item.discountType === "percentage") {
                             const pct = isFinite(rawDiscount) ? rawDiscount : 0;
@@ -1418,7 +1868,7 @@ function POSContent() {
                             const amountDiscount = isFinite(rawDiscount) ? rawDiscount : 0;
                             itemDiscount = Math.min(itemTotal, amountDiscount);
                           }
-                          return Math.max(0, itemTotal - itemDiscount);
+                          return Math.max(minimumLineTotal(item), itemTotal - itemDiscount);
                         })())}
                       </p>
                     </div>
@@ -1446,14 +1896,17 @@ function POSContent() {
                     onChange={(e) => {
                       const val = e.target.value === "" ? 0 : Number(e.target.value) || 0;
                       let validDiscount = Math.max(0, val);
+                      const minimumTotal = cartMinimumTotal();
+                      const maxGlobalDiscount = Math.max(0, subtotal - minimumTotal);
 
                       // Validate based on discount type
                       if (discountType === "percentage") {
                         // Percentage discount can't be >= 100
-                        validDiscount = Math.min(99.99, validDiscount);
+                        const maxPct = subtotal > 0 ? (maxGlobalDiscount / subtotal) * 100 : 0;
+                        validDiscount = Math.min(99.99, maxPct, validDiscount);
                       } else {
                         // Amount discount can't exceed subtotal
-                        validDiscount = Math.min(subtotal, validDiscount);
+                        validDiscount = Math.min(maxGlobalDiscount, validDiscount);
                       }
 
                       setDiscount(validDiscount);
@@ -1465,14 +1918,17 @@ function POSContent() {
                     onChange={(e) => {
                       const newType = e.target.value as "lkr" | "percentage";
                       let validDiscount = discount;
+                      const minimumTotal = cartMinimumTotal();
+                      const maxGlobalDiscount = Math.max(0, subtotal - minimumTotal);
 
                       // Validate discount for the new type
                       if (newType === "percentage") {
                         // If switching to percentage, ensure it's < 100
-                        validDiscount = Math.min(99.99, validDiscount);
+                        const maxPct = subtotal > 0 ? (maxGlobalDiscount / subtotal) * 100 : 0;
+                        validDiscount = Math.min(99.99, maxPct, validDiscount);
                       } else {
                         // If switching to amount, ensure it doesn't exceed subtotal
-                        validDiscount = Math.min(subtotal, validDiscount);
+                        validDiscount = Math.min(maxGlobalDiscount, validDiscount);
                       }
 
                       setDiscountType(newType);
@@ -1492,6 +1948,71 @@ function POSContent() {
             </div>
 
             {/* Payment Method */}
+            {shopBillingEnabled && (
+              <div className="mb-4 rounded-lg border border-gray-200 bg-white p-3">
+                <label className="block text-sm font-medium text-gray-900 mb-2">
+                  Sale Type
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {(["walk_in", "shop"] as const).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => {
+                        setSaleType(type);
+                        setAmountPaid(0);
+                      }}
+                      className={`rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                        saleType === type
+                          ? "border-blue-600 bg-blue-50 text-blue-700"
+                          : "border-gray-200 text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                      {type === "shop" ? "Neighbour Shop" : "Walk-in Customer"}
+                    </button>
+                  ))}
+                </div>
+                {isShopSale && (
+                  <div className="mt-3 grid grid-cols-1 gap-2">
+                    <select
+                      value={selectedShopId}
+                      onChange={(e) => {
+                        setSelectedShopId(e.target.value);
+                        if (e.target.value) {
+                          setNewShopName("");
+                          setNewShopPhone("");
+                        }
+                      }}
+                      className="input-base text-sm"
+                    >
+                      <option value="">New shop / enter name below</option>
+                      {shopAccounts.map((shop) => (
+                        <option key={shop.id} value={shop.id}>
+                          {shop.name} - Due {money(shop.due_amount || 0)}
+                        </option>
+                      ))}
+                    </select>
+                    {!selectedShopId && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <input
+                          value={newShopName}
+                          onChange={(e) => setNewShopName(e.target.value)}
+                          className="input-base text-sm"
+                          placeholder="Shop name"
+                        />
+                        <input
+                          value={newShopPhone}
+                          onChange={(e) => setNewShopPhone(e.target.value)}
+                          className="input-base text-sm"
+                          placeholder="Phone optional"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-900 mb-2">
                 Payment Method
@@ -1510,23 +2031,29 @@ function POSContent() {
               </select>
             </div>
 
-            {paymentMethod === "cash" && (
+            {(paymentMethod === "cash" || isShopSale) && (
               <div className="mb-4 grid grid-cols-2 gap-3">
                 <label className="block text-sm font-medium text-gray-900">
-                  Money Given
+                  {isShopSale ? "Paid Now" : "Money Given"}
                   <input
                     type="number"
                     min="0"
+                    max={isShopSale ? total : undefined}
                     value={amountPaid ? String(amountPaid) : ""}
-                    onChange={(e) => setAmountPaid(Math.max(0, Number(e.target.value) || 0))}
+                    onChange={(e) => {
+                      const next = Math.max(0, Number(e.target.value) || 0);
+                      setAmountPaid(isShopSale ? Math.min(next, total) : next);
+                    }}
                     className="input-base text-sm mt-2"
                     placeholder="0"
                   />
                 </label>
                 <div className="rounded-lg border border-gray-200 bg-white p-3">
-                  <p className="text-sm text-gray-600">Balance</p>
-                  <p className="text-xl font-bold text-green-600">
-                    {money(Math.max(0, Math.round((amountPaid || 0) - total)))}
+                  <p className="text-sm text-gray-600">{isShopSale ? "Due" : "Balance"}</p>
+                  <p className={`text-xl font-bold ${isShopSale ? "text-red-600" : "text-green-600"}`}>
+                    {isShopSale
+                      ? money(Math.max(0, Math.round(total - (amountPaid || 0))))
+                      : money(Math.max(0, Math.round((amountPaid || 0) - total)))}
                   </p>
                 </div>
               </div>
@@ -1583,6 +2110,12 @@ function POSContent() {
                     placeholder="Enter transaction ID..."
                     value={transactionId}
                     onChange={(e) => setTransactionId(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && returnBarcodeEnabled) {
+                        e.preventDefault();
+                        handleLookupTransaction();
+                      }
+                    }}
                     className="input-base flex-1"
                   />
                   <button
@@ -1688,6 +2221,7 @@ function POSContent() {
               placeholder="Search replacements..."
               value={barcodeInput}
               onChange={(e) => handleSearchFilter(e.target.value)}
+              onKeyDown={handleBarcodeInput}
               className="input-base text-sm"
             />
           </div>
@@ -1702,30 +2236,7 @@ function POSContent() {
                       setPendingProduct(product);
                       setShowVariantSelector(true);
                     } else {
-                      // Check if item already exists in replacement cart
-                      const existingItem = replacementCart.find((item) => item.id === product.id);
-                      if (existingItem) {
-                        // Increment quantity if item exists
-                        setReplacementCart(
-                          replacementCart.map((item) =>
-                            item.id === product.id
-                              ? { ...item, quantity: item.quantity + 1 }
-                              : item
-                          )
-                        );
-                      } else {
-                        // Add new item
-                        const item: CartItem = {
-                          id: product.id,
-                          name: product.name,
-                          price: product.price,
-                          quantity: 1,
-                          image_url: product.image_url,
-                          discount: 0,
-                          discountType: "lkr",
-                        };
-                        setReplacementCart([...replacementCart, item]);
-                      }
+                      addToReplacementCart(product);
                     }
                   }}
                   className="p-2 text-left rounded bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-400 transition-colors"
@@ -1787,9 +2298,25 @@ function POSContent() {
                       value={item.quantity}
                       onChange={(e) => {
                         const newQty = parseInt(e.target.value) || 1;
+                        let maxQty = Infinity;
+                        if (replacementStockProtectionEnabled) {
+                          if (item.variant_id) {
+                            maxQty =
+                              products
+                                .flatMap((product) => product.variants || [])
+                                .find((variant) => variant.id === item.variant_id)?.quantity || 0;
+                          } else {
+                            maxQty = products.find((product) => product.id === item.product_id)?.quantity || 0;
+                          }
+                          if (newQty > maxQty) {
+                            toast.error(`Only ${maxQty} available`);
+                          }
+                        }
                         setReplacementCart(
                           replacementCart.map((i) =>
-                            i.id === item.id ? { ...i, quantity: newQty } : i
+                            i.id === item.id
+                              ? { ...i, quantity: Math.max(1, Math.min(newQty, maxQty)) }
+                              : i
                           )
                         );
                       }}
@@ -1855,9 +2382,9 @@ function POSContent() {
               >
                 {showReceiptBusinessInfo && (
                   <div className="text-center border-b border-dashed border-gray-300 pb-3 mb-3">
-                    {receiptSettings.logoImage && (
+                    {receiptLogoImage && (
                       <img
-                        src={receiptSettings.logoImage}
+                        src={receiptLogoImage}
                         alt="Logo"
                         className="mx-auto mb-2 h-14 max-w-[150px] object-contain"
                       />
@@ -1880,11 +2407,32 @@ function POSContent() {
                     <span>Date</span>
                     <span>{new Date(receiptPreview.transactionDate).toLocaleString()}</span>
                   </div>
+                  {receiptPreview.saleType === "shop" && (
+                    <div className="flex justify-between gap-3">
+                      <span>Shop</span>
+                      <span>{receiptPreview.customerName}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between gap-3">
                     <span>Payment</span>
                     <span className="capitalize">{receiptPreview.paymentMethod}</span>
                   </div>
-                  {receiptPreview.paymentMethod === "cash" && (
+                  {receiptPreview.saleType === "shop" ? (
+                    <>
+                      <div className="flex justify-between gap-3">
+                        <span>Status</span>
+                        <span className="capitalize">{receiptPreview.paymentStatus}</span>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <span>Paid</span>
+                        <span>{money(Math.round(receiptPreview.amountPaid || 0))}</span>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <span>Due</span>
+                        <span>{money(Math.round(receiptPreview.dueAmount || 0))}</span>
+                      </div>
+                    </>
+                  ) : receiptPreview.paymentMethod === "cash" && (
                     <>
                       <div className="flex justify-between gap-3">
                         <span>Received</span>
@@ -1934,6 +2482,12 @@ function POSContent() {
                     <span>Discount</span>
                     <span>{money(Math.round(receiptPreview.discount))}</span>
                   </div>
+                  {taxCalculationEnabled && (
+                    <div className="flex justify-between">
+                      <span>Tax</span>
+                      <span>{money(Math.round(receiptPreview.tax))}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between border-t pt-2 text-lg font-bold">
                     <span>Total</span>
                     <span>{money(Math.round(receiptPreview.total))}</span>
@@ -1989,15 +2543,10 @@ function POSContent() {
             {/* Product Image */}
             <div className="mb-6">
               <div className="w-full h-64 bg-gray-200 rounded-lg overflow-hidden">
-                <img
-                  src={selectedProduct.image_url && selectedProduct.image_url.startsWith('data:') 
-                    ? selectedProduct.image_url 
-                    : (selectedProduct.image_url || "https://via.placeholder.com/150?text=No+Image")}
-                  onError={(e) => {
-                    e.currentTarget.src = "https://via.placeholder.com/150?text=No+Image";
-                  }}
+                <OfflineProductImage
+                  src={selectedProduct.image_url}
                   alt={selectedProduct.name}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full"
                 />
               </div>
             </div>
@@ -2123,38 +2672,7 @@ function POSContent() {
                     key={variant.id}
                     onClick={() => {
                       if (mode === "returns") {
-                        // Handle for replacement cart
-                        const cartItemId = `${pendingProduct.id}-${variant.id}`;
-                        const existingItem = replacementCart.find((item) => item.id === cartItemId);
-                        
-                        if (existingItem) {
-                          // Increment quantity if item exists
-                          setReplacementCart(
-                            replacementCart.map((item) =>
-                              item.id === cartItemId
-                                ? { ...item, quantity: item.quantity + 1 }
-                                : item
-                            )
-                          );
-                        } else {
-                          // Add new item
-                          const variantPrice = pendingProduct.price + variant.price_adjustment;
-                          const newItem: CartItem = {
-                            id: cartItemId,
-                            name: pendingProduct.name,
-                            price: variantPrice,
-                            quantity: 1,
-                            image_url: pendingProduct.image_url,
-                            discount: 0,
-                            discountType: "lkr",
-                            variant_id: variant.id,
-                            variant_type: variant.variant_type,
-                            variant_value: variant.variant_value,
-                            variant_type_2: variant.variant_type_2,
-                            variant_value_2: variant.variant_value_2,
-                          };
-                          setReplacementCart([...replacementCart, newItem]);
-                        }
+                        addVariantToReplacementCart(pendingProduct, variant);
                       } else {
                         // Handle for main cart (sale mode)
                         addToCartWithVariant(pendingProduct, variant);

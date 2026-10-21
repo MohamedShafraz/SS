@@ -11,6 +11,7 @@
     "license:keys": "node scripts/license-keys.cjs",
     "license:server": "node scripts/activation-server.cjs",
     "license:issue": "node scripts/activation-server.cjs --issue",
+    "license:list": "node scripts/activation-server.cjs --list",
     "write-license-config": "node scripts/write-license-config.cjs",
     "register-client": "node scripts/register-client.cjs",
     "prepare-electron": "node scripts/prepare-electron.cjs",

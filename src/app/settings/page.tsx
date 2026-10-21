@@ -1,18 +1,44 @@
 "use client";
 
 import { MainLayout } from "@/components/layout";
-import type { BarcodeStickerPreset, BusinessProfile } from "@/types";
-import { useCallback, useEffect, useState, type ChangeEvent } from "react";
-import { Save, AlertCircle, Users, UserPlus, RotateCcw, ShieldCheck } from "lucide-react";
+import type {
+  BarcodePdfViewerId,
+  BarcodeStickerFieldAlignment,
+  BarcodeStickerFieldId,
+  BarcodeStickerPreset,
+  BusinessProfile,
+} from "@/types";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Save,
+  AlertCircle,
+  Users,
+  UserPlus,
+  RotateCcw,
+  ShieldCheck,
+  Database,
+  Download,
+  FolderOpen,
+  Upload,
+} from "lucide-react";
 import toast from "react-hot-toast";
+import { useAuth } from "@/lib/auth-context";
 import { SHOP_TEMPLATES } from "@/lib/shop-offerings";
 import { CURRENCY_OPTIONS, DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
 import {
+  BARCODE_FIELD_DEFINITIONS,
   BUILT_IN_BARCODE_PRESETS,
+  DEFAULT_BARCODE_FIELD_ORDER,
   getActiveBarcodePreset,
+  getBarcodeFieldAlignment,
+  getBarcodeFieldGapMm,
   getBarcodePresets,
+  isBarcodeFieldVisible,
   normalizeBarcodePreset,
 } from "@/lib/barcode-layout";
+import { getOfflineImageSrc } from "@/components/OfflineProductImage";
 
 interface ManagedUser {
   id: string;
@@ -23,7 +49,43 @@ interface ManagedUser {
   created_at: string;
 }
 
+interface MaintenanceReturn {
+  id: string;
+  original_transaction_id: string;
+  reason?: string | null;
+  status?: string | null;
+  return_date: string;
+}
+
+type HardwareBridge = {
+  selectBackupFolder?: () => Promise<{
+    canceled?: boolean;
+    path?: string;
+    error?: string;
+  }>;
+  listPdfViewers?: () => Promise<Array<{
+    id: BarcodePdfViewerId;
+    name: string;
+    installed: boolean;
+  }>>;
+  openPdfRepairSettings?: () => Promise<{ success: boolean; error?: string }>;
+  previewBarcodeHtml?: (
+    html: string,
+    options: { pageWidthMm: number; pageHeightMm: number },
+    viewerIds?: BarcodePdfViewerId[]
+  ) => Promise<{ success: boolean; viewerName?: string; error?: string }>;
+};
+
+type PdfViewerInfo = {
+  id: BarcodePdfViewerId;
+  name: string;
+  installed: boolean;
+};
+
 export default function SettingsPage() {
+  const { user } = useAuth();
+  const canMaintain = user?.role === "admin" || user?.role === "manager";
+  const canConfigureBarcodePrinting = user?.role === "admin";
   const [settings, setSettings] = useState<BusinessProfile>({
     businessName: "Unified Business",
     address: "123 Main Street, City",
@@ -46,6 +108,31 @@ export default function SettingsPage() {
     receiptFooterText: "",
     barcodeStickerPresetId: "builtin-2-column-compact",
     barcodeStickerCustomPresets: [],
+    barcodePdfViewerEnabledIds: ["system", "adobe", "edge", "chrome", "firefox"],
+    barcodePdfViewerPreferredId: "system",
+    autoBackupEnabled: false,
+    autoBackupFolderPath: "",
+    autoBackupLastRunAt: "",
+    autoBackupLastStatus: "",
+    autoBackupLastMessage: "",
+    autoBackupLastPath: "",
+    allowTransactionDelete: false,
+    posSetPriceRule: "least_price",
+    billBarcodeEnabled: true,
+    returnBarcodeEnabled: true,
+    replacementBarcodeEnabled: true,
+    replacementStockProtectionEnabled: true,
+    partialReturnProtectionEnabled: true,
+    taxCalculationEnabled: false,
+    transactionFiltersEnabled: false,
+    reportExportsEnabled: false,
+    backupRestoreAdminOnlyEnabled: true,
+    shopBillingEnabled: false,
+    shopDashboardReceivablesEnabled: true,
+    shopDashboardPartialBillsEnabled: true,
+    shopDashboardUnpaidBillsEnabled: true,
+    shopDashboardFollowupPaymentsEnabled: true,
+    shopDashboardFollowupTableEnabled: true,
   });
 
   const [barcodeScannerSettings, setBarcodeScannerSettings] = useState({
@@ -61,6 +148,7 @@ export default function SettingsPage() {
   });
 
   const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [maintenanceReturns, setMaintenanceReturns] = useState<MaintenanceReturn[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
@@ -74,21 +162,36 @@ export default function SettingsPage() {
     email: "",
     password: "",
   });
+  const [backupWorking, setBackupWorking] = useState<
+    "download" | "restore" | "folder" | "auto" | null
+  >(null);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
   const [savedCredential, setSavedCredential] = useState<{
     email: string;
     password: string;
     note: string;
   } | null>(null);
+  const [showTransactionDeleteWarning, setShowTransactionDeleteWarning] = useState(false);
+  const [pdfViewers, setPdfViewers] = useState<PdfViewerInfo[]>([
+    { id: "system", name: "Windows default PDF app", installed: true },
+    { id: "adobe", name: "Adobe Acrobat / Reader", installed: false },
+    { id: "edge", name: "Microsoft Edge", installed: false },
+    { id: "chrome", name: "Google Chrome", installed: false },
+    { id: "firefox", name: "Mozilla Firefox", installed: false },
+  ]);
+  const [barcodeAppPreviewSupported, setBarcodeAppPreviewSupported] = useState(false);
+  const [openingBarcodeSample, setOpeningBarcodeSample] = useState(false);
 
   const handleSettingChange = (
     key: keyof BusinessProfile,
-    value: string | number | boolean | BarcodeStickerPreset[]
+    value: BusinessProfile[keyof BusinessProfile]
   ) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
 
   const activeBarcodePreset = getActiveBarcodePreset(settings);
   const barcodePresets = getBarcodePresets(settings);
+  const logoPreviewImage = getOfflineImageSrc(settings.logoImage);
   const isGa2408tPreset =
     activeBarcodePreset.id === "builtin-ga-2408t-102mm-3up-25mm" ||
     (
@@ -99,7 +202,6 @@ export default function SettingsPage() {
       Math.abs(Number(activeBarcodePreset.marginLeftMm)) <= 0.5 &&
       Math.abs(Number(activeBarcodePreset.marginRightMm)) <= 0.5
     );
-  const isVerticalBarcodePreset = activeBarcodePreset.orientation === "vertical";
 
   const updateActiveBarcodePreset = (updates: Partial<BarcodeStickerPreset>) => {
     const current = normalizeBarcodePreset({ ...activeBarcodePreset, ...updates });
@@ -151,6 +253,37 @@ export default function SettingsPage() {
     }));
   };
 
+  const moveBarcodeField = (field: BarcodeStickerFieldId, direction: -1 | 1) => {
+    const order = [...(activeBarcodePreset.fieldOrder || DEFAULT_BARCODE_FIELD_ORDER)];
+    const currentIndex = order.indexOf(field);
+    const nextIndex = currentIndex + direction;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= order.length) return;
+
+    [order[currentIndex], order[nextIndex]] = [order[nextIndex], order[currentIndex]];
+    updateActiveBarcodePreset({ fieldOrder: order });
+  };
+
+  const updateBarcodeFieldGap = (field: BarcodeStickerFieldId, gapMm: number) => {
+    updateActiveBarcodePreset({
+      fieldGapsMm: {
+        ...(activeBarcodePreset.fieldGapsMm || {}),
+        [field]: Math.max(0, gapMm),
+      },
+    });
+  };
+
+  const updateBarcodeFieldAlignment = (
+    field: BarcodeStickerFieldId,
+    alignment: BarcodeStickerFieldAlignment
+  ) => {
+    updateActiveBarcodePreset({
+      fieldAlignments: {
+        ...(activeBarcodePreset.fieldAlignments || {}),
+        [field]: alignment,
+      },
+    });
+  };
+
   const handleLogoChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -172,6 +305,26 @@ export default function SettingsPage() {
   const handleNotificationChange = (key: string, value: boolean | number) => {
     setNotificationSettings((prev) => ({ ...prev, [key]: value }));
   };
+
+  const renderFeatureToggle = (
+    key: keyof BusinessProfile,
+    title: string,
+    description: string,
+    defaultEnabled = false
+  ) => (
+    <label className="flex items-center justify-between gap-4 rounded-lg bg-gray-50 p-4">
+      <div>
+        <p className="font-medium text-gray-900">{title}</p>
+        <p className="text-sm text-gray-600">{description}</p>
+      </div>
+      <input
+        type="checkbox"
+        checked={defaultEnabled ? settings[key] !== false : Boolean(settings[key])}
+        onChange={(e) => handleSettingChange(key, e.target.checked as BusinessProfile[keyof BusinessProfile])}
+        className="h-6 w-6 cursor-pointer"
+      />
+    </label>
+  );
 
   const fetchUsers = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -205,6 +358,22 @@ export default function SettingsPage() {
     return () => controller.abort();
   }, [fetchUsers]);
 
+  const fetchMaintenanceRecords = useCallback(async () => {
+    if (!canMaintain) return;
+    try {
+      const response = await fetch("/api/admin/maintenance");
+      if (!response.ok) return;
+      const result = await response.json();
+      setMaintenanceReturns((result.returns || []) as MaintenanceReturn[]);
+    } catch {
+      // Maintenance data is optional for older installations.
+    }
+  }, [canMaintain]);
+
+  useEffect(() => {
+    fetchMaintenanceRecords();
+  }, [fetchMaintenanceRecords]);
+
   useEffect(() => {
     let active = true;
 
@@ -229,6 +398,138 @@ export default function SettingsPage() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!canConfigureBarcodePrinting) return;
+    const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
+    setBarcodeAppPreviewSupported(Boolean(bridge?.previewBarcodeHtml));
+    bridge?.listPdfViewers?.()
+      .then((viewers) => {
+        if (viewers.length > 0) setPdfViewers(viewers);
+      })
+      .catch((error) => console.warn("Unable to detect PDF viewers:", error));
+  }, [canConfigureBarcodePrinting]);
+
+  const getEnabledPdfViewerIds = () => {
+    const supported: BarcodePdfViewerId[] = ["system", "adobe", "edge", "chrome", "firefox"];
+    const configured = settings.barcodePdfViewerEnabledIds?.filter((id) => supported.includes(id));
+    return configured && configured.length > 0 ? configured : supported;
+  };
+
+  const togglePdfViewer = (viewerId: BarcodePdfViewerId, enabled: boolean) => {
+    const current = getEnabledPdfViewerIds();
+    const next = enabled
+      ? [...current, viewerId].filter((id, index, ids) => ids.indexOf(id) === index)
+      : current.filter((id) => id !== viewerId);
+    if (next.length === 0) {
+      toast.error("At least one PDF preview app must remain enabled");
+      return;
+    }
+    setSettings((previous) => ({
+      ...previous,
+      barcodePdfViewerEnabledIds: next,
+      barcodePdfViewerPreferredId: next.includes(previous.barcodePdfViewerPreferredId || "system")
+        ? previous.barcodePdfViewerPreferredId
+        : next[0],
+    }));
+  };
+
+  const openPdfRepairSettings = async () => {
+    const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
+    if (!bridge?.openPdfRepairSettings) {
+      toast.error("Windows repair settings are available in the desktop app");
+      return;
+    }
+    const result = await bridge.openPdfRepairSettings();
+    if (!result.success) toast.error(result.error || "Unable to open Windows settings");
+  };
+
+  const getBarcodeSamplePageSize = () => {
+    if (isGa2408tPreset) {
+      return { width: 102, height: 25 };
+    }
+
+    return {
+      width:
+        activeBarcodePreset.stickerWidthMm * activeBarcodePreset.columns +
+        activeBarcodePreset.columnGapMm * Math.max(0, activeBarcodePreset.columns - 1) +
+        activeBarcodePreset.marginLeftMm +
+        activeBarcodePreset.marginRightMm,
+      height: Math.min(
+        activeBarcodePreset.maxRollLengthMm,
+        activeBarcodePreset.stickerHeightMm * activeBarcodePreset.rows +
+          activeBarcodePreset.rowGapMm * Math.max(0, activeBarcodePreset.rows - 1) +
+          activeBarcodePreset.marginTopMm +
+          activeBarcodePreset.marginBottomMm
+      ),
+    };
+  };
+
+  const buildBarcodeSampleHtml = () => {
+    const page = getBarcodeSamplePageSize();
+    const escapeSampleText = (value: string) => value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+    const labelWidth = isGa2408tPreset ? 31.33 : activeBarcodePreset.stickerWidthMm;
+    const labelHeight = isGa2408tPreset ? 25 : activeBarcodePreset.stickerHeightMm;
+    const columns = isGa2408tPreset ? 3 : activeBarcodePreset.columns;
+    const rows = isGa2408tPreset ? 1 : activeBarcodePreset.rows;
+    const columnGap = isGa2408tPreset ? 4 : activeBarcodePreset.columnGapMm;
+    const rowGap = isGa2408tPreset ? 0 : activeBarcodePreset.rowGapMm;
+    const sampleLabel = `<div class="label">
+      <div class="business">${escapeSampleText(settings.businessName || "Sample Business")}</div>
+      <div class="product">Sample Product</div>
+      <div class="barcode"></div>
+      <div class="barcode-text">BCD-1789800117556</div>
+      <div class="price">${formatCurrency(1800, settings.currency)}</div>
+    </div>`;
+    const labelCount = Math.max(1, Math.min(12, columns * rows));
+
+    return `<!doctype html><html><head><meta charset="utf-8"><style>
+      @page { size: ${page.width}mm ${page.height}mm; margin: 0; }
+      * { box-sizing: border-box; }
+      html, body { width: ${page.width}mm; min-height: ${page.height}mm; margin: 0; padding: 0; }
+      body { font-family: Arial, Helvetica, sans-serif; color: #111; }
+      .sheet { width: ${page.width}mm; min-height: ${page.height}mm; display: grid;
+        grid-template-columns: repeat(${columns}, ${labelWidth}mm); grid-auto-rows: ${labelHeight}mm;
+        gap: ${rowGap}mm ${columnGap}mm; padding: ${isGa2408tPreset ? 0 : activeBarcodePreset.marginTopMm}mm ${isGa2408tPreset ? 0 : activeBarcodePreset.marginRightMm}mm ${isGa2408tPreset ? 0 : activeBarcodePreset.marginBottomMm}mm ${isGa2408tPreset ? 0 : activeBarcodePreset.marginLeftMm}mm; }
+      .label { width: ${labelWidth}mm; height: ${labelHeight}mm; overflow: hidden; padding: .7mm .4mm;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1; }
+      .business { width: 100%; overflow: hidden; font-size: ${activeBarcodePreset.businessInfoFontSize}px; font-weight: 700; white-space: nowrap; }
+      .product { width: 100%; overflow: hidden; margin-top: .5mm; font-size: ${activeBarcodePreset.productNameFontSize}px; font-weight: 700; white-space: nowrap; }
+      .barcode { width: 92%; height: ${Math.min(10, activeBarcodePreset.barcodeHeightMm)}mm; margin-top: .7mm;
+        background: repeating-linear-gradient(90deg, #111 0, #111 .35mm, transparent .35mm, transparent .65mm, #111 .65mm, #111 .85mm, transparent .85mm, transparent 1.25mm); }
+      .barcode-text { margin-top: .25mm; font-size: ${activeBarcodePreset.barcodeTextFontSize || Math.max(6, activeBarcodePreset.businessInfoFontSize)}px; white-space: nowrap; }
+      .price { margin-top: .45mm; font-size: ${activeBarcodePreset.sellingPriceFontSize}px; font-weight: 800; }
+    </style></head><body><div class="sheet">${Array.from({ length: labelCount }, () => sampleLabel).join("")}</div></body></html>`;
+  };
+
+  const openBarcodeSample = async () => {
+    const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
+    if (!bridge?.previewBarcodeHtml) {
+      toast.error("Barcode sample preview requires the latest MSHPOS desktop app");
+      return;
+    }
+
+    setOpeningBarcodeSample(true);
+    try {
+      const page = getBarcodeSamplePageSize();
+      const result = await bridge.previewBarcodeHtml(
+        buildBarcodeSampleHtml(),
+        { pageWidthMm: page.width, pageHeightMm: page.height },
+        getEnabledPdfViewerIds()
+      );
+      if (!result.success) throw new Error(result.error || "Unable to open barcode sample");
+      toast.success(`Sample opened in ${result.viewerName || "the configured PDF app"}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to open barcode sample");
+    } finally {
+      setOpeningBarcodeSample(false);
+    }
+  };
 
   const handleCreateUser = async () => {
     if (!newUser.email.trim() || !newUser.password.trim()) {
@@ -302,8 +603,8 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSave = async () => {
-    localStorage.setItem("posSettings", JSON.stringify(settings));
+  const saveSettingsToStore = async (nextSettings: BusinessProfile) => {
+    localStorage.setItem("posSettings", JSON.stringify(nextSettings));
     localStorage.setItem(
       "barcodeScannerSettings",
       JSON.stringify(barcodeScannerSettings)
@@ -317,14 +618,317 @@ export default function SettingsPage() {
       const response = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings }),
+        body: JSON.stringify({ settings: nextSettings }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "Failed to save settings");
+      if (result.settings) {
+        const savedSettings = { ...nextSettings, ...result.settings };
+        setSettings(savedSettings);
+        localStorage.setItem("posSettings", JSON.stringify(savedSettings));
+        return savedSettings;
+      }
+      return nextSettings;
+    } catch (error) {
+      throw error instanceof Error ? error : new Error("Settings saved locally only");
+    }
+  };
+
+  const updateManagedUser = async (managedUser: ManagedUser) => {
+    const role = window.prompt("Role (admin, manager, cashier)", managedUser.role)?.trim();
+    if (!role || !["admin", "manager", "cashier"].includes(role)) return;
+    const active = window.confirm("Keep this user active? Choose Cancel to deactivate.");
+    const response = await fetch("/api/users", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: managedUser.id, role, active }),
+    });
+    const result = await response.json();
+    if (!response.ok) toast.error(result.message || "Failed to update user");
+    else { toast.success("User updated"); fetchUsers(); }
+  };
+
+  const deleteManagedUser = async (managedUser: ManagedUser) => {
+    if (!window.confirm(`Delete ${managedUser.email}? This cannot be undone.`)) return;
+    const response = await fetch("/api/users", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: managedUser.id }),
+    });
+    const result = await response.json();
+    if (!response.ok) toast.error(result.message || "Failed to delete user");
+    else { toast.success("User deleted"); fetchUsers(); }
+  };
+
+  const updateReturnStatus = async (record: MaintenanceReturn) => {
+    const status = window.prompt("Status (pending, completed, cancelled)", record.status || "pending")?.trim();
+    if (!status || !["pending", "completed", "cancelled"].includes(status)) return;
+    const response = await fetch("/api/admin/maintenance", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "returns", id: record.id, values: { status } }),
+    });
+    const result = await response.json();
+    if (!response.ok) toast.error(result.error?.message || "Failed to update return");
+    else { toast.success("Return updated"); fetchMaintenanceRecords(); }
+  };
+
+  const deleteReturn = async (record: MaintenanceReturn) => {
+    if (!window.confirm("Delete this return and its return items?")) return;
+    const response = await fetch("/api/admin/maintenance", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "returns", id: record.id }),
+    });
+    const result = await response.json();
+    if (!response.ok) toast.error(result.error?.message || "Failed to delete return");
+    else { toast.success("Return deleted"); fetchMaintenanceRecords(); }
+  };
+
+  const handleSave = async () => {
+    try {
+      await saveSettingsToStore(settings);
       toast.success("Settings saved successfully!");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Settings saved locally only");
     }
+  };
+
+  const handleTransactionDeleteToggle = (enabled: boolean) => {
+    if (!enabled) {
+      handleSettingChange("allowTransactionDelete", false);
+      return;
+    }
+
+    setShowTransactionDeleteWarning(true);
+  };
+
+  const confirmTransactionDeleteSetting = () => {
+    handleSettingChange("allowTransactionDelete", true);
+    setShowTransactionDeleteWarning(false);
+  };
+
+  const getBackupFilename = (disposition: string | null) => {
+    const fallback = `pos-backup-${new Date().toISOString().slice(0, 10)}.sqlite`;
+    if (!disposition) return fallback;
+
+    const match = /filename="?([^";]+)"?/i.exec(disposition);
+    return match?.[1] || fallback;
+  };
+
+  const handleDownloadBackup = async () => {
+    try {
+      setBackupWorking("download");
+      const response = await fetch("/api/backup", { cache: "no-store" });
+      if (!response.ok) {
+        const result = await response.json().catch(() => null);
+        throw new Error(result?.message || "Failed to create backup");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = getBackupFilename(response.headers.get("content-disposition"));
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Backup downloaded");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to download backup");
+    } finally {
+      setBackupWorking(null);
+    }
+  };
+
+  const handleRestoreBackup = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    if (settings.backupRestoreAdminOnlyEnabled !== false && user?.role !== "admin") {
+      toast.error("Only admins can restore backups");
+      return;
+    }
+
+    if (!window.confirm("Restore this backup and replace the current local data?")) {
+      return;
+    }
+
+    try {
+      setBackupWorking("restore");
+      const response = await fetch("/api/backup", {
+        method: "POST",
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+        },
+        body: file,
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(result?.message || "Failed to restore backup");
+      }
+
+      localStorage.removeItem("posSettings");
+      toast.success(result?.message || "Backup restored");
+      window.setTimeout(() => window.location.reload(), 600);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to restore backup");
+    } finally {
+      setBackupWorking(null);
+    }
+  };
+
+  const handleChooseBackupFolder = async () => {
+    const bridge = (window as Window & { mshposHardware?: HardwareBridge }).mshposHardware;
+    if (!bridge?.selectBackupFolder) {
+      toast.error("Backup folder picker is available in the desktop app");
+      return;
+    }
+
+    try {
+      setBackupWorking("folder");
+      const result = await bridge.selectBackupFolder();
+      if (result.canceled) return;
+      if (!result.path) throw new Error(result.error || "No backup folder selected");
+
+      const nextSettings = {
+        ...settings,
+        autoBackupFolderPath: result.path,
+      };
+      setSettings(nextSettings);
+      await saveSettingsToStore(nextSettings);
+      toast.success("Backup folder saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to choose backup folder");
+    } finally {
+      setBackupWorking(null);
+    }
+  };
+
+  const handleRunAutoBackup = async () => {
+    if (!settings.autoBackupFolderPath?.trim()) {
+      toast.error("Choose a backup folder first");
+      return;
+    }
+
+    try {
+      setBackupWorking("auto");
+      await saveSettingsToStore(settings);
+      const response = await fetch("/api/backup/auto", {
+        method: "POST",
+        cache: "no-store",
+      });
+      const result = await response.json().catch(() => null);
+      if (result?.settings) {
+        setSettings((prev) => ({ ...prev, ...result.settings }));
+        localStorage.setItem("posSettings", JSON.stringify(result.settings));
+      }
+      if (!response.ok) {
+        throw new Error(result?.message || "Automatic backup failed");
+      }
+
+      toast.success(result?.message || "Automatic backup checked");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Automatic backup failed");
+    } finally {
+      setBackupWorking(null);
+    }
+  };
+
+  const renderPreviewBarcodeField = (field: BarcodeStickerFieldId) => {
+    const gapPx = Math.max(0, getBarcodeFieldGapMm(activeBarcodePreset, field) * 2);
+    const alignment = getBarcodeFieldAlignment(activeBarcodePreset, field);
+    const textStyle = {
+      marginBottom: `${gapPx}px`,
+      textAlign: alignment,
+    } satisfies CSSProperties;
+
+    if (field === "businessName") {
+      return (
+        <div key={field} className="w-full truncate font-bold" style={{ ...textStyle, fontSize: activeBarcodePreset.businessInfoFontSize }}>
+          GOODE
+        </div>
+      );
+    }
+
+    if (field === "businessAddress") {
+      return (
+        <div key={field} className="w-full truncate" style={{ ...textStyle, fontSize: activeBarcodePreset.businessAddressFontSize || Math.max(5, activeBarcodePreset.businessInfoFontSize - 1) }}>
+          123 Main Street
+        </div>
+      );
+    }
+
+    if (field === "businessPhone") {
+      return (
+        <div key={field} className="w-full truncate" style={{ ...textStyle, fontSize: activeBarcodePreset.businessPhoneFontSize || Math.max(5, activeBarcodePreset.businessInfoFontSize - 1) }}>
+          +94 77 712 3456
+        </div>
+      );
+    }
+
+    if (field === "productName") {
+      return (
+        <div key={field} className="w-full font-semibold truncate" style={{ ...textStyle, fontSize: activeBarcodePreset.productNameFontSize }}>
+          Sample Product
+        </div>
+      );
+    }
+
+    if (field === "barcodeImage") {
+      const justifyContent =
+        alignment === "left" ? "flex-start" : alignment === "right" ? "flex-end" : "center";
+      return (
+        <div key={field} className="w-full flex" style={{ marginBottom: `${gapPx}px`, justifyContent }}>
+          <div
+            className="bg-gray-900"
+            style={{
+              width: isGa2408tPreset ? "88px" : "96px",
+              height: isGa2408tPreset && (activeBarcodePreset.showBusinessAddress || activeBarcodePreset.showBusinessPhone) ? "20px" : isGa2408tPreset ? "28px" : "24px",
+            }}
+          />
+        </div>
+      );
+    }
+
+    if (field === "barcodeText") {
+      return (
+        <div
+          key={field}
+          className="w-full truncate"
+          style={{
+            ...textStyle,
+            fontSize: activeBarcodePreset.barcodeTextFontSize || Math.max(6, activeBarcodePreset.businessInfoFontSize),
+          }}
+        >
+          BCD-1789800117556
+        </div>
+      );
+    }
+
+    if (field === "sellingPrice") {
+      return (
+        <div key={field} className="w-full truncate font-bold" style={{ ...textStyle, fontSize: activeBarcodePreset.sellingPriceFontSize }}>
+          Price: 1,800
+        </div>
+      );
+    }
+
+    if (field === "leastPrice") {
+      return (
+        <div key={field} className="w-full truncate" style={{ ...textStyle, fontSize: activeBarcodePreset.leastPriceFontSize }}>
+          Least: 1,650
+        </div>
+      );
+    }
+
+    return (
+      <div key={field} className="w-full truncate font-bold" style={{ ...textStyle, fontSize: activeBarcodePreset.leastPriceCodeFontSize }}>
+        BM6
+      </div>
+    );
   };
 
   return (
@@ -554,6 +1158,199 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* Transaction Controls */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex items-center gap-2 mb-6">
+            <ShieldCheck className="w-5 h-5 text-blue-600" />
+            <h2 className="text-xl font-semibold text-gray-900">
+              Transaction Controls
+            </h2>
+          </div>
+
+          <label className="flex items-center justify-between gap-4 rounded-lg bg-gray-50 p-4">
+            <div>
+              <p className="font-medium text-gray-900">Allow transaction deletion</p>
+              <p className="text-sm text-gray-600">
+                Enables admin-only deletion for mistaken transactions.
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={Boolean(settings.allowTransactionDelete)}
+              onChange={(e) => handleTransactionDeleteToggle(e.target.checked)}
+              className="h-6 w-6 cursor-pointer"
+            />
+          </label>
+
+          <div className="mt-4 rounded-lg bg-gray-50 p-4">
+            <div className="mb-3">
+              <p className="font-medium text-gray-900">POS set price limit</p>
+              <p className="text-sm text-gray-600">
+                Controls the lowest set price allowed for items in the POS cart.
+              </p>
+            </div>
+            <div className="space-y-3">
+              {[
+                {
+                  value: "least_price",
+                  label: "Greater than or equal to least price",
+                },
+                {
+                  value: "cost",
+                  label: "Greater than or equal to cost",
+                },
+                {
+                  value: "below_cost",
+                  label: "Allow less than cost",
+                },
+              ].map((option) => (
+                <label
+                  key={option.value}
+                  className="flex cursor-pointer items-center gap-3 rounded-lg border border-gray-200 bg-white p-3 text-sm font-medium text-gray-900"
+                >
+                  <input
+                    type="radio"
+                    name="posSetPriceRule"
+                    value={option.value}
+                    checked={(settings.posSetPriceRule || "least_price") === option.value}
+                    onChange={() =>
+                      handleSettingChange(
+                        "posSetPriceRule",
+                        option.value as BusinessProfile["posSetPriceRule"]
+                      )
+                    }
+                    className="h-5 w-5 cursor-pointer"
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Feature Options */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold text-gray-900">Feature Options</h2>
+            <p className="text-sm text-gray-600">
+              Optional POS features are backward compatible. Missing values in older settings keep safe defaults.
+            </p>
+          </div>
+
+          <div className="space-y-6">
+            <div>
+              <h3 className="mb-3 font-semibold text-gray-900">Barcode Workflows</h3>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {renderFeatureToggle(
+                  "billBarcodeEnabled",
+                  "Bill barcode scanning",
+                  "Allow scanner input in normal sale mode.",
+                  true
+                )}
+                {renderFeatureToggle(
+                  "returnBarcodeEnabled",
+                  "Return barcode lookup",
+                  "Allow transaction ID scan or Enter lookup in return mode.",
+                  true
+                )}
+                {renderFeatureToggle(
+                  "replacementBarcodeEnabled",
+                  "Replacement barcode scan",
+                  "Allow product and variant scan-to-add in replacement mode.",
+                  true
+                )}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-3 font-semibold text-gray-900">POS Safety</h3>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {renderFeatureToggle(
+                  "replacementStockProtectionEnabled",
+                  "Replacement stock protection",
+                  "Block replacement quantities that exceed available stock.",
+                  true
+                )}
+                {renderFeatureToggle(
+                  "partialReturnProtectionEnabled",
+                  "Partial return protection",
+                  "Prevent already-returned quantities from being returned again.",
+                  true
+                )}
+                {renderFeatureToggle(
+                  "taxCalculationEnabled",
+                  "Tax calculation",
+                  "Apply the configured tax rate during checkout and on receipts."
+                )}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-3 font-semibold text-gray-900">Reports And Data</h3>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {renderFeatureToggle(
+                  "transactionFiltersEnabled",
+                  "Transaction filters",
+                  "Filter transactions by date, payment method, and transaction type."
+                )}
+                {renderFeatureToggle(
+                  "reportExportsEnabled",
+                  "Report exports",
+                  "Export the current transaction list to CSV."
+                )}
+                {renderFeatureToggle(
+                  "backupRestoreAdminOnlyEnabled",
+                  "Admin-only backup restore",
+                  "Require an admin login before restoring backup data.",
+                  true
+                )}
+                {renderFeatureToggle(
+                  "shopBillingEnabled",
+                  "Neighbour shop billing",
+                  "Allow POS bills for shop accounts with unpaid and partial payment tracking."
+                )}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-3 font-semibold text-gray-900">Shop Dashboard</h3>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {renderFeatureToggle(
+                  "shopDashboardReceivablesEnabled",
+                  "Shop receivables card",
+                  "Show total outstanding neighbour shop dues on the dashboard.",
+                  true
+                )}
+                {renderFeatureToggle(
+                  "shopDashboardPartialBillsEnabled",
+                  "Partial bills card",
+                  "Show the count of partially paid shop bills.",
+                  true
+                )}
+                {renderFeatureToggle(
+                  "shopDashboardUnpaidBillsEnabled",
+                  "Unpaid bills card",
+                  "Show the count of unpaid shop bills.",
+                  true
+                )}
+                {renderFeatureToggle(
+                  "shopDashboardFollowupPaymentsEnabled",
+                  "Follow-up payments card",
+                  "Show today's follow-up payments collected from old shop bills.",
+                  true
+                )}
+                {renderFeatureToggle(
+                  "shopDashboardFollowupTableEnabled",
+                  "Follow-up bills table",
+                  "Show unpaid and partial shop bills that need collection follow-up.",
+                  true
+                )}
+              </div>
+            </div>
+
+          </div>
+        </div>
+
         {/* Print Settings */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-xl font-semibold text-gray-900 mb-6">
@@ -615,9 +1412,9 @@ export default function SettingsPage() {
             <div className="rounded-lg border border-gray-200 p-4">
               <h3 className="font-medium text-gray-900 mb-3">Receipt Logo</h3>
               <input type="file" accept="image/*" onChange={handleLogoChange} className="input-base" />
-              {settings.logoImage && (
+              {logoPreviewImage && (
                 <div className="mt-3 flex items-center gap-3">
-                  <img src={settings.logoImage} alt="Receipt logo" className="h-16 w-16 object-contain border rounded bg-white" />
+                  <img src={logoPreviewImage} alt="Receipt logo" className="h-16 w-16 object-contain border rounded bg-white" />
                   <button
                     type="button"
                     onClick={() => handleSettingChange("logoImage", "")}
@@ -696,6 +1493,70 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          {canConfigureBarcodePrinting && (
+            <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="font-semibold text-gray-900">Barcode PDF Preview Apps</h3>
+                  <p className="mt-1 text-sm text-gray-600">
+                    Normal barcode printing remains automatic. Use a PDF app here only to test the sample layout and orientation during setup.
+                  </p>
+                </div>
+                <button type="button" onClick={openPdfRepairSettings} className="btn-secondary btn-sm shrink-0">
+                  Repair Windows PDF Access
+                </button>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {pdfViewers.map((viewer) => {
+                  const enabled = getEnabledPdfViewerIds().includes(viewer.id);
+                  const preferred = (settings.barcodePdfViewerPreferredId || "system") === viewer.id;
+                  return (
+                    <div key={viewer.id} className="rounded-lg border border-blue-100 bg-white p-3">
+                      <label className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={enabled}
+                          onChange={(event) => togglePdfViewer(viewer.id, event.target.checked)}
+                          className="mt-1 h-5 w-5"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium text-gray-900">{viewer.name}</span>
+                          <span className={`block text-xs ${viewer.installed ? "text-green-700" : "text-gray-500"}`}>
+                            {viewer.installed ? "Available" : "Not detected on this computer"}
+                          </span>
+                        </span>
+                      </label>
+                      <label className="mt-3 flex items-center gap-2 text-xs font-medium text-gray-700">
+                        <input
+                          type="radio"
+                          name="preferredBarcodePdfViewer"
+                          checked={preferred}
+                          disabled={!enabled}
+                          onChange={() => handleSettingChange("barcodePdfViewerPreferredId", viewer.id)}
+                        />
+                        Preferred preview app
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-xs text-gray-600">
+                PDF pages keep the configured physical size and orientation. In an external app, print using Actual size or 100% scale.
+              </p>
+              {barcodeAppPreviewSupported && (
+                <button
+                  type="button"
+                  onClick={openBarcodeSample}
+                  disabled={openingBarcodeSample}
+                  className="btn-primary btn-sm mt-3 disabled:opacity-50"
+                >
+                  {openingBarcodeSample ? "Opening Sample..." : "Open Sample in PDF App"}
+                </button>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -722,17 +1583,19 @@ export default function SettingsPage() {
                     className="input-base"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 mb-2">Orientation</label>
-                  <select
-                    value={activeBarcodePreset.orientation || "horizontal"}
-                    onChange={(e) => updateActiveBarcodePreset({ orientation: e.target.value as BarcodeStickerPreset["orientation"] })}
-                    className="input-base"
-                  >
-                    <option value="horizontal">Horizontal</option>
-                    <option value="vertical">Vertical</option>
-                  </select>
-                </div>
+                {barcodeAppPreviewSupported && !isGa2408tPreset && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-900 mb-2">Orientation</label>
+                    <select
+                      value={activeBarcodePreset.orientation || "horizontal"}
+                      onChange={(e) => updateActiveBarcodePreset({ orientation: e.target.value as BarcodeStickerPreset["orientation"] })}
+                      className="input-base"
+                    >
+                      <option value="vertical">Vertical (Portrait)</option>
+                      <option value="horizontal">Horizontal (Landscape)</option>
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -754,6 +1617,7 @@ export default function SettingsPage() {
                   ["Price Font", "sellingPriceFontSize"],
                   ["Least Font", "leastPriceFontSize"],
                   ["Code Font", "leastPriceCodeFontSize"],
+                  ["Barcode Text Font", "barcodeTextFontSize"],
                   ["Business Name Font", "businessInfoFontSize"],
                   ["Address Font", "businessAddressFontSize"],
                   ["Phone Font", "businessPhoneFontSize"],
@@ -762,7 +1626,8 @@ export default function SettingsPage() {
                     {label}
                     <input
                       type="number"
-                      min={key === "barcodeBarWidth" ? 0.8 : 0}
+                      min={key === "barcodeBarWidth" ? 0.8 : key === "barcodeTextFontSize" ? 4 : 0}
+                      max={key === "barcodeTextFontSize" ? 12 : undefined}
                       step={key === "barcodeBarWidth" ? 0.1 : 1}
                       value={Number(activeBarcodePreset[key as keyof BarcodeStickerPreset])}
                       onChange={(e) => updateActiveBarcodePreset({ [key]: Number(e.target.value) } as Partial<BarcodeStickerPreset>)}
@@ -794,6 +1659,79 @@ export default function SettingsPage() {
                   </label>
                 ))}
               </div>
+
+              <div className="rounded-lg border border-gray-200 p-4">
+                <p className="text-sm font-semibold text-gray-900 mb-3">Field Order & Spacing</p>
+                <div className="space-y-2">
+                  {(activeBarcodePreset.fieldOrder || DEFAULT_BARCODE_FIELD_ORDER).map((field, index, order) => {
+                    const definition = BARCODE_FIELD_DEFINITIONS.find((item) => item.id === field);
+                    const hidden = !isBarcodeFieldVisible(activeBarcodePreset, field);
+                    return (
+                      <div
+                        key={field}
+                        className={`grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-2 items-center rounded-lg bg-gray-50 p-3 ${hidden ? "opacity-60" : ""}`}
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">
+                            {definition?.label || field}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {hidden ? "Hidden" : "Visible"}
+                          </p>
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => moveBarcodeField(field, -1)}
+                            disabled={index === 0}
+                            className="rounded border border-gray-300 bg-white p-2 text-gray-700 disabled:opacity-40"
+                            title="Move up"
+                          >
+                            <ArrowUp className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveBarcodeField(field, 1)}
+                            disabled={index === order.length - 1}
+                            className="rounded border border-gray-300 bg-white p-2 text-gray-700 disabled:opacity-40"
+                            title="Move down"
+                          >
+                            <ArrowDown className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <label className="text-xs font-medium text-gray-700">
+                          Gap mm
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.1}
+                            value={getBarcodeFieldGapMm(activeBarcodePreset, field)}
+                            onChange={(e) => updateBarcodeFieldGap(field, Number(e.target.value))}
+                            className="input-base mt-1 w-24"
+                          />
+                        </label>
+                        <label className="text-xs font-medium text-gray-700">
+                          Align
+                          <select
+                            value={getBarcodeFieldAlignment(activeBarcodePreset, field)}
+                            onChange={(e) =>
+                              updateBarcodeFieldAlignment(
+                                field,
+                                e.target.value as BarcodeStickerFieldAlignment
+                              )
+                            }
+                            className="input-base mt-1 w-28"
+                          >
+                            <option value="left">Left</option>
+                            <option value="center">Center</option>
+                            <option value="right">Right</option>
+                          </select>
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
             <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 overflow-auto">
@@ -802,13 +1740,13 @@ export default function SettingsPage() {
                 className="grid bg-white border border-dashed border-gray-300"
                 style={{
                   gridTemplateColumns: isGa2408tPreset
-                    ? (isVerticalBarcodePreset ? "75px" : "repeat(3, 94px)")
+                    ? "repeat(3, 94px)"
                     : `repeat(${activeBarcodePreset.columns}, ${Math.min(140, activeBarcodePreset.stickerWidthMm * 2.1)}px)`,
                   gap: isGa2408tPreset
-                    ? (isVerticalBarcodePreset ? "12px 0" : "0 12px")
+                    ? "0 12px"
                     : `${Math.max(4, activeBarcodePreset.rowGapMm * 2)}px ${Math.max(4, activeBarcodePreset.columnGapMm * 2)}px`,
                   padding: isGa2408tPreset ? 0 : `${Math.max(6, activeBarcodePreset.marginTopMm * 2)}px`,
-                  width: isGa2408tPreset ? (isVerticalBarcodePreset ? "75px" : "318px") : undefined,
+                  width: isGa2408tPreset ? "318px" : undefined,
                 }}
               >
                 {Array.from({ length: Math.min(12, activeBarcodePreset.columns * activeBarcodePreset.rows) }).map((_, index) => (
@@ -816,20 +1754,15 @@ export default function SettingsPage() {
                     key={index}
                     className="border border-gray-300 bg-white text-center overflow-hidden flex flex-col justify-center"
                     style={{
-                      width: isGa2408tPreset ? (isVerticalBarcodePreset ? "75px" : "94px") : `${Math.min(140, activeBarcodePreset.stickerWidthMm * 2.1)}px`,
-                      height: isGa2408tPreset ? (isVerticalBarcodePreset ? "94px" : "75px") : `${Math.min(110, activeBarcodePreset.stickerHeightMm * 2.1)}px`,
+                      width: isGa2408tPreset ? "94px" : `${Math.min(140, activeBarcodePreset.stickerWidthMm * 2.1)}px`,
+                      height: isGa2408tPreset ? "75px" : `${Math.min(110, activeBarcodePreset.stickerHeightMm * 2.1)}px`,
                       padding: isGa2408tPreset ? "2px 1px" : undefined,
                       justifyContent: isGa2408tPreset ? "flex-start" : undefined,
                     }}
                   >
-                    {activeBarcodePreset.showBusinessName && <div className="w-full truncate font-bold" style={{ fontSize: activeBarcodePreset.businessInfoFontSize }}>GOODE</div>}
-                    {activeBarcodePreset.showBusinessAddress && <div className="w-full truncate" style={{ fontSize: activeBarcodePreset.businessAddressFontSize || Math.max(5, activeBarcodePreset.businessInfoFontSize - 1) }}>123 Main Street</div>}
-                    {activeBarcodePreset.showBusinessPhone && <div className="w-full truncate" style={{ fontSize: activeBarcodePreset.businessPhoneFontSize || Math.max(5, activeBarcodePreset.businessInfoFontSize - 1) }}>+94 77 712 3456</div>}
-                    {activeBarcodePreset.showProductName && <div className="w-full font-semibold truncate" style={{ fontSize: activeBarcodePreset.productNameFontSize }}>Sample Product</div>}
-                    <div className="mx-auto my-1 bg-gray-900" style={{ width: isGa2408tPreset ? "88px" : "96px", height: isGa2408tPreset && (activeBarcodePreset.showBusinessAddress || activeBarcodePreset.showBusinessPhone) ? "20px" : isGa2408tPreset ? "28px" : "24px" }} />
-                    {activeBarcodePreset.showBarcodeText && <div className="w-full truncate" style={{ fontSize: isGa2408tPreset ? 6 : activeBarcodePreset.businessInfoFontSize }}>BCD-1789800117556</div>}
-                    {activeBarcodePreset.showSellingPrice && <div className="w-full truncate font-bold" style={{ fontSize: activeBarcodePreset.sellingPriceFontSize }}>Price: 1,800</div>}
-                    {activeBarcodePreset.showLeastPriceCode && <div className="w-full truncate font-bold" style={{ fontSize: activeBarcodePreset.leastPriceCodeFontSize }}>BM6</div>}
+                    {(activeBarcodePreset.fieldOrder || DEFAULT_BARCODE_FIELD_ORDER)
+                      .filter((field) => isBarcodeFieldVisible(activeBarcodePreset, field))
+                      .map((field) => renderPreviewBarcodeField(field))}
                   </div>
                 ))}
               </div>
@@ -837,33 +1770,16 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Barcode Scanner Settings */}
+        {/* Barcode Scanner Preferences */}
         <div className="bg-white rounded-lg shadow-md p-6">
           <div className="flex items-center gap-2 mb-6">
             <AlertCircle className="w-5 h-5 text-blue-600" />
             <h2 className="text-xl font-semibold text-gray-900">
-              Barcode Scanner Settings
+              Barcode Scanner Preferences
             </h2>
           </div>
 
           <div className="space-y-4">
-            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-              <div>
-                <h3 className="font-medium text-gray-900">Enable Scanner</h3>
-                <p className="text-sm text-gray-600">
-                  Enable barcode scanning in POS system
-                </p>
-              </div>
-              <input
-                type="checkbox"
-                checked={barcodeScannerSettings.enabled}
-                onChange={(e) =>
-                  handleBarcodeScannerChange("enabled", e.target.checked)
-                }
-                className="w-6 h-6 cursor-pointer"
-              />
-            </div>
-
             <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
               <div>
                 <h3 className="font-medium text-gray-900">Sound Alert</h3>
@@ -966,41 +1882,115 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Shop Templates */}
+        {/* Data Backup */}
         <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">
-            Shop Templates
-          </h2>
-          <p className="text-sm text-gray-600 mb-6">
-            Each shop gets its own category set so your POS stays organized by industry.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {SHOP_TEMPLATES.map((template) => (
-              <div
-                key={template.mode}
-                className="rounded-xl border border-gray-200 p-5 bg-gradient-to-br from-white to-gray-50"
-              >
-                <div className="flex items-start justify-between gap-4 mb-3">
-                  <div>
-                    <h3 className="text-lg font-semibold text-gray-900">
-                      {template.title}
-                    </h3>
-                    <p className="text-sm text-gray-600">{template.subtitle}</p>
-                  </div>
-                </div>
-                <p className="text-sm text-gray-700 mb-4">{template.description}</p>
-                <div className="flex flex-wrap gap-2">
-                  {template.categoryFocus.slice(0, 5).map((item) => (
-                    <span
-                      key={item}
-                      className="text-xs px-3 py-1 rounded-full bg-gray-100 text-gray-700"
-                    >
-                      {item}
-                    </span>
-                  ))}
-                </div>
+          <div className="flex items-center gap-2 mb-6">
+            <Database className="w-5 h-5 text-blue-600" />
+            <h2 className="text-xl font-semibold text-gray-900">Backup Data</h2>
+          </div>
+
+          <input
+            ref={restoreInputRef}
+            type="file"
+            accept=".sqlite,.db,.json,application/json,application/vnd.sqlite3,application/octet-stream"
+            onChange={handleRestoreBackup}
+            className="hidden"
+          />
+
+          <div className="mb-5 space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+            <label className="flex items-center justify-between gap-4">
+              <div>
+                <p className="font-medium text-gray-900">Automatic Daily Backup</p>
+                <p className="text-sm text-gray-600">Save one backup per day to a selected local folder.</p>
               </div>
-            ))}
+              <input
+                type="checkbox"
+                checked={Boolean(settings.autoBackupEnabled)}
+                onChange={(e) => handleSettingChange("autoBackupEnabled", e.target.checked)}
+                className="h-6 w-6 cursor-pointer"
+              />
+            </label>
+
+            <div className="grid grid-cols-1 gap-3">
+              <label className="text-sm font-medium text-gray-900">
+                Backup Folder
+                <div className="mt-1 flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={settings.autoBackupFolderPath || ""}
+                    readOnly
+                    className="input-base bg-white"
+                    placeholder="No folder selected"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleChooseBackupFolder}
+                    disabled={backupWorking !== null}
+                    className="btn-secondary flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                  >
+                    <FolderOpen className="w-4 h-4" />
+                    {backupWorking === "folder" ? "Choosing..." : "Choose Folder"}
+                  </button>
+                </div>
+              </label>
+
+              {(settings.autoBackupLastStatus || settings.autoBackupLastMessage) && (
+                <div className="rounded-lg bg-white p-3 text-sm text-gray-700">
+                  <p className="font-medium text-gray-900">
+                    Last status: {settings.autoBackupLastStatus || "unknown"}
+                  </p>
+                  {settings.autoBackupLastMessage && (
+                    <p className="mt-1">{settings.autoBackupLastMessage}</p>
+                  )}
+                  {settings.autoBackupLastRunAt && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      {new Date(settings.autoBackupLastRunAt).toLocaleString()}
+                    </p>
+                  )}
+                  {settings.autoBackupLastPath && (
+                    <p className="mt-1 break-all text-xs text-gray-500">
+                      {settings.autoBackupLastPath}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleRunAutoBackup}
+                disabled={backupWorking !== null || !settings.autoBackupEnabled}
+                className="btn-secondary flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                <Database className="w-4 h-4" />
+                {backupWorking === "auto" ? "Checking Backup..." : "Run Auto Backup Check"}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <button
+              type="button"
+              onClick={handleDownloadBackup}
+              disabled={backupWorking !== null}
+              className="btn-primary flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              <Download className="w-5 h-5" />
+              {backupWorking === "download" ? "Preparing Backup..." : "Download Backup"}
+            </button>
+            <button
+              type="button"
+              onClick={() => restoreInputRef.current?.click()}
+              disabled={backupWorking !== null || (settings.backupRestoreAdminOnlyEnabled !== false && user?.role !== "admin")}
+              className="btn-secondary flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+              title={
+                settings.backupRestoreAdminOnlyEnabled !== false && user?.role !== "admin"
+                  ? "Only admins can restore backups"
+                  : "Restore Backup"
+              }
+            >
+              <Upload className="w-5 h-5" />
+              {backupWorking === "restore" ? "Restoring Backup..." : "Restore Backup"}
+            </button>
           </div>
         </div>
 
@@ -1155,7 +2145,7 @@ export default function SettingsPage() {
                     </div>
                     <div className="mt-3 flex items-center justify-between text-sm text-gray-600">
                       <span className="uppercase tracking-[0.18em]">{user.role}</span>
-                      <span>{new Date(user.created_at).toLocaleDateString()}</span>
+                      <div className="flex items-center gap-3"><span>{new Date(user.created_at).toLocaleDateString()}</span>{canMaintain && <><button type="button" onClick={() => updateManagedUser(user)} className="text-blue-600">Edit</button><button type="button" onClick={() => deleteManagedUser(user)} className="text-red-600">Delete</button></>}</div>
                     </div>
                   </div>
                 ))}
@@ -1163,6 +2153,37 @@ export default function SettingsPage() {
             )}
           </div>
         </div>
+
+        {canMaintain && (
+          <div className="rounded-xl border border-orange-200 bg-orange-50 p-5">
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">Admin Maintenance</h2>
+                <p className="text-sm text-gray-600">Review or correct return records without changing normal employee workflows.</p>
+              </div>
+              <button type="button" onClick={() => fetchMaintenanceRecords()} className="text-sm text-blue-600 hover:text-blue-700">Refresh</button>
+            </div>
+            {maintenanceReturns.length === 0 ? (
+              <p className="text-sm text-gray-600">No return records found.</p>
+            ) : (
+              <div className="space-y-2">
+                {maintenanceReturns.map((record) => (
+                  <div key={record.id} className="flex flex-col gap-2 rounded-lg border border-orange-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-medium text-gray-900">Return {record.id}</p>
+                      <p className="text-xs text-gray-600">Transaction {record.original_transaction_id} · {record.reason || "No reason"}</p>
+                    </div>
+                    <div className="flex items-center gap-3 text-sm">
+                      <span className="capitalize text-gray-600">{record.status || "pending"}</span>
+                      <button type="button" onClick={() => updateReturnStatus(record)} className="text-blue-600">Edit</button>
+                      <button type="button" onClick={() => deleteReturn(record)} className="text-red-600">Delete</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Save Button */}
         <div className="flex gap-3">
@@ -1172,6 +2193,41 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
+
+      {showTransactionDeleteWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center gap-3">
+              <AlertCircle className="h-6 w-6 text-red-600" />
+              <h2 className="text-xl font-semibold text-gray-900">
+                Enable transaction deletion?
+              </h2>
+            </div>
+            <div className="space-y-3 text-sm text-gray-700">
+              <p>Transaction deletion is permanent.</p>
+              <p>Deleted sales will be removed from reports.</p>
+              <p>Stock from the deleted transaction will be restored.</p>
+              <p>This should only be used for mistaken transactions.</p>
+            </div>
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setShowTransactionDeleteWarning(false)}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmTransactionDeleteSetting}
+                className="rounded-lg bg-red-600 px-4 py-2 font-medium text-white transition-colors hover:bg-red-700"
+              >
+                Enable Deletion
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </MainLayout>
   );
 }

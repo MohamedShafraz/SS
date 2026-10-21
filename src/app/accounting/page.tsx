@@ -8,6 +8,7 @@ import {
   type AccountingProduct,
   type AccountingSupplier,
   type AccountingSupplierPayment,
+  type AccountingShopPayment,
   type AccountingTransaction,
   type AccountingTransactionItem,
   type ReportPeriodType,
@@ -15,9 +16,10 @@ import {
 import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
 import { supabase } from "@/lib/supabase";
 import type { BusinessProfile } from "@/types";
-import { BarChart3, Plus, ReceiptText, Scale } from "lucide-react";
+import { BarChart3, Edit3, Plus, ReceiptText, Scale, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
+import { useAuth } from "@/lib/auth-context";
 
 interface Expense {
   id: string;
@@ -40,6 +42,8 @@ function todayKey() {
 }
 
 export default function AccountingPage() {
+  const { user } = useAuth();
+  const canMaintain = user?.role === "admin" || user?.role === "manager";
   const [activeTab, setActiveTab] = useState<AccountingTab>("expenses");
   const [periodType, setPeriodType] = useState<ReportPeriodType>("month");
   const [periodAnchor, setPeriodAnchor] = useState(todayKey());
@@ -49,6 +53,7 @@ export default function AccountingPage() {
   const [products, setProducts] = useState<AccountingProduct[]>([]);
   const [suppliers, setSuppliers] = useState<AccountingSupplier[]>([]);
   const [supplierPayments, setSupplierPayments] = useState<AccountingSupplierPayment[]>([]);
+  const [shopPayments, setShopPayments] = useState<AccountingShopPayment[]>([]);
   const [currency, setCurrency] = useState(DEFAULT_CURRENCY);
   const [loadingReports, setLoadingReports] = useState(true);
   const [form, setForm] = useState({
@@ -57,6 +62,7 @@ export default function AccountingPage() {
     description: "",
     amount: 0,
   });
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
 
   const fetchAccountingData = useCallback(async () => {
     setLoadingReports(true);
@@ -67,6 +73,7 @@ export default function AccountingPage() {
       productsResult,
       suppliersResult,
       supplierPaymentsResult,
+      shopPaymentsResult,
     ] = await Promise.all([
       supabase.from("expenses").select("*").order("expense_date", { ascending: false }),
       supabase
@@ -78,6 +85,7 @@ export default function AccountingPage() {
       supabase.from("products").select("*"),
       supabase.from("suppliers").select("*"),
       supabase.from("supplier_payments").select("*"),
+      supabase.from("shop_payments").select("*"),
     ]);
 
     if (expensesResult.error) toast.error("Failed to load expenses");
@@ -92,6 +100,9 @@ export default function AccountingPage() {
     if (!suppliersResult.error) setSuppliers((suppliersResult.data || []) as AccountingSupplier[]);
     if (!supplierPaymentsResult.error) {
       setSupplierPayments((supplierPaymentsResult.data || []) as AccountingSupplierPayment[]);
+    }
+    if (!shopPaymentsResult.error) {
+      setShopPayments((shopPaymentsResult.data || []) as AccountingShopPayment[]);
     }
     setLoadingReports(false);
   }, []);
@@ -125,9 +136,10 @@ export default function AccountingPage() {
         products,
         suppliers,
         supplierPayments,
+        shopPayments,
         profitLoss.netProfit
       ),
-    [products, profitLoss.netProfit, reportRange, supplierPayments, suppliers, transactions]
+    [products, profitLoss.netProfit, reportRange, shopPayments, supplierPayments, suppliers, transactions]
   );
 
   const totals = useMemo(() => {
@@ -146,14 +158,25 @@ export default function AccountingPage() {
       toast.error("Expense amount is required");
       return;
     }
-    const { error } = await supabase.from("expenses").insert([form]);
+    const query = editingExpenseId
+      ? supabase.from("expenses").maintenance().update(form).eq("id", editingExpenseId)
+      : supabase.from("expenses").insert([form]);
+    const { error } = await query;
     if (error) {
       toast.error("Failed to save expense");
       return;
     }
     setForm({ expense_date: todayKey(), category: "daily", description: "", amount: 0 });
-    toast.success("Expense saved");
+    setEditingExpenseId(null);
+    toast.success(editingExpenseId ? "Expense updated" : "Expense saved");
     fetchAccountingData();
+  };
+
+  const deleteExpense = async (id: string) => {
+    if (!window.confirm("Delete this expense?")) return;
+    const { error } = await supabase.from("expenses").maintenance().delete().eq("id", id);
+    if (error) toast.error(error.message || "Failed to delete expense");
+    else { toast.success("Expense deleted"); fetchAccountingData(); }
   };
 
   const money = useCallback((amount: number) => formatCurrency(amount, currency), [currency]);
@@ -223,8 +246,9 @@ export default function AccountingPage() {
               <input type="number" min={0} value={form.amount || ""} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) || 0 })} className="input-base" placeholder="Amount" />
               <button onClick={saveExpense} className="btn-success flex items-center justify-center gap-2 md:col-span-5">
                 <Plus className="w-4 h-4" />
-                Save Expense
+                {editingExpenseId ? "Update Expense" : "Save Expense"}
               </button>
+              {editingExpenseId && <button onClick={() => { setEditingExpenseId(null); setForm({ expense_date: todayKey(), category: "daily", description: "", amount: 0 }); }} className="btn-secondary md:col-span-5">Cancel</button>}
             </div>
 
             <div className="bg-white rounded-lg shadow-md overflow-hidden">
@@ -243,7 +267,7 @@ export default function AccountingPage() {
                           </p>
                         </div>
                       </div>
-                      <p className="font-bold text-gray-900">{money(expense.amount)}</p>
+                      <div className="flex items-center gap-3"><p className="font-bold text-gray-900">{money(expense.amount)}</p>{canMaintain && <><button type="button" onClick={() => { setEditingExpenseId(expense.id); setForm({ expense_date: expense.expense_date, category: expense.category, description: expense.description || "", amount: Number(expense.amount || 0) }); }} className="text-blue-600"><Edit3 className="w-4 h-4" /></button><button type="button" onClick={() => deleteExpense(expense.id)} className="text-red-600"><Trash2 className="w-4 h-4" /></button></>}</div>
                     </div>
                   ))
                 )}
@@ -347,6 +371,7 @@ export default function AccountingPage() {
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between"><span>Inventory value</span><span>{money(financialPosition.inventoryValue)}</span></div>
                         <div className="flex justify-between"><span>Period cash / sales received</span><span>{money(financialPosition.periodCashReceived)}</span></div>
+                        <div className="flex justify-between"><span>Shop receivables</span><span>{money(financialPosition.customerReceivables)}</span></div>
                         <div className="flex justify-between border-t pt-2 font-bold"><span>Total assets</span><span>{money(financialPosition.totalAssets)}</span></div>
                       </div>
                     </div>
@@ -369,4 +394,3 @@ export default function AccountingPage() {
     </MainLayout>
   );
 }
-

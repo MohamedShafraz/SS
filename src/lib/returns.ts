@@ -180,14 +180,15 @@ export const createReplacementTransaction = async (
   returnId: string,
   totalAmount: number,
   discountAmount: number,
-  paymentMethod: string
+  paymentMethod: string,
+  taxAmount = 0
 ): Promise<Transaction | null> => {
   try {
     const replacementTransaction: TransactionInsert = {
       transaction_date: new Date().toISOString(),
       total_amount: totalAmount,
       discount_amount: discountAmount,
-      tax_amount: 0,
+      tax_amount: taxAmount,
       payment_method: paymentMethod,
       status: "completed",
       stripe_session_id: null,
@@ -245,7 +246,8 @@ export const createReturnTransaction = async (
 };
 
 export const fetchReturnableTransactionWithItems = async (
-  transactionId: string
+  transactionId: string,
+  protectReturnedQuantities = true
 ): Promise<TransactionLookupResult> => {
   const result = await fetchTransactionWithItems(transactionId);
   if (!result) {
@@ -256,9 +258,58 @@ export const fetchReturnableTransactionWithItems = async (
     return { ok: false, reason: "non_returnable" };
   }
 
-  const returnableItems = result.items.filter(
+  let returnableItems = result.items.filter(
     (item) => item.quantity > 0 && item.subtotal > 0
   );
+
+  if (protectReturnedQuantities && returnableItems.length > 0) {
+    const { data: existingReturns, error: returnsError } = await supabase
+      .from("returns")
+      .select("*")
+      .eq("original_transaction_id", result.transaction.id);
+
+    if (returnsError) {
+      console.error("Error checking previous returns:", returnsError);
+    } else {
+      const activeReturnIds = ((existingReturns || []) as Return[])
+        .filter((entry) => entry.status !== "cancelled")
+        .map((entry) => entry.id);
+
+      if (activeReturnIds.length > 0) {
+        const { data: returnItemRows, error: returnItemsError } = await supabase
+          .from("return_items")
+          .select("*");
+
+        if (returnItemsError) {
+          console.error("Error checking previous return items:", returnItemsError);
+        } else {
+          const returnedByItem = new Map<string, number>();
+          ((returnItemRows || []) as Array<{ return_id: string; product_id: string; variant_id?: string | null; quantity: number }>)
+            .filter((item) => activeReturnIds.includes(item.return_id))
+            .forEach((item) => {
+              const key = `${item.product_id}:${item.variant_id || ""}`;
+              returnedByItem.set(key, (returnedByItem.get(key) || 0) + Number(item.quantity || 0));
+            });
+
+          returnableItems = returnableItems
+            .map((item) => {
+              const key = `${item.product_id}:${item.variant_id || ""}`;
+              const returnedQuantity = returnedByItem.get(key) || 0;
+              const remainingQuantity = Math.max(0, item.quantity - returnedQuantity);
+              if (remainingQuantity <= 0) return null;
+
+              const ratio = item.quantity > 0 ? remainingQuantity / item.quantity : 0;
+              return {
+                ...item,
+                quantity: remainingQuantity,
+                subtotal: item.subtotal * ratio,
+              };
+            })
+            .filter((item): item is ReturnableTransactionItem => Boolean(item));
+        }
+      }
+    }
+  }
 
   if (returnableItems.length === 0) {
     return { ok: false, reason: "no_returnable_items" };
