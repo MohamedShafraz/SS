@@ -1,109 +1,29 @@
 {
-  "name": "pos-system",
-  "version": "0.1.1",
+  "name": "mshpos-website",
+  "version": "0.2.0",
   "author": "PitchCrafte",
   "private": true,
   "scripts": {
-    "dev": "cross-env NODE_OPTIONS=--openssl-legacy-provider next dev",
-    "build": "cross-env NODE_OPTIONS=--openssl-legacy-provider next build",
+    "dev": "next dev",
+    "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
-    "prepare-electron": "node scripts/prepare-electron.cjs",
-    "create-appx-assets": "node scripts/create-appx-assets.cjs",
-    "build:store-iap": "dotnet publish native/StoreIapBridge/StoreIapBridge.csproj -c Release -r win-x64",
-    "dist:win": "npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && npx.cmd --no-install electron-builder --win nsis",
-    "validate:store-config": "node scripts/validate-store-build.cjs --config",
-    "validate:store-artifact": "node scripts/validate-store-build.cjs --artifact",
-    "dist:store": "npm.cmd run validate:store-config && npm.cmd run create-appx-assets && npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && npm.cmd run validate:store-artifact && npx.cmd --no-install electron-builder --win appx",
-    "pack:win": "npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && npx.cmd --no-install electron-builder --win dir"
-  },
-  "main": "electron/main.cjs",
-  "build": {
-    "appId": "com.mshpos.offline",
-    "productName": "MSHPOS",
-    "icon": "build/icon.ico",
-    "asar": true,
-    "asarUnpack": [
-      ".next/standalone/**"
-    ],
-    "files": [
-      "electron/**",
-      ".next/standalone/**",
-      "!.next/standalone/.env*",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "native/StoreIapBridge/bin/Release/net8.0-windows10.0.26100.0/win-x64/publish",
-        "to": "store-iap",
-        "filter": [
-          "StoreIapBridge.exe",
-          "*.dll",
-          "*.winmd",
-          "*.json"
-        ]
-      }
-    ],
-    "directories": {
-      "output": "release"
-    },
-    "win": {
-      "icon": "build/icon.ico",
-      "target": [
-        "nsis"
-      ],
-      "artifactName": "MSHPOS Setup ${version}.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "MSHPOS"
-    },
-    "appx": {
-      "identityName": "PitchCrafte.MSHPOS",
-      "publisher": "CN=A188C90E-1346-4AEE-B716-509F5CEFFC9E",
-      "publisherDisplayName": "PitchCrafte",
-      "applicationId": "MSHPOS",
-      "backgroundColor": "#111827",
-      "languages": [
-        "en-US"
-      ],
-      "minVersion": "10.0.19041.0",
-      "maxVersionTested": "10.0.26100.0"
-    }
+    "lint": "eslint ."
   },
   "dependencies": {
-    "bcryptjs": "^3.0.3",
-    "date-fns": "^2.30.0",
-    "html2canvas": "^1.4.1",
-    "jsbarcode": "^3.11.5",
-    "jsonwebtoken": "^9.0.3",
-    "jspdf": "^4.2.1",
-    "lucide-react": "^1.14.0",
     "next": "^16.4.2",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "react-hot-toast": "^2.4.0",
-    "recharts": "^2.10.0",
-    "zustand": "^4.4.0"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^3.0.0",
-    "@types/jsonwebtoken": "^9.0.10",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "autoprefixer": "^10.0.1",
-    "cross-env": "^10.1.0",
-    "electron": "^43.2.0",
-    "electron-builder": "^26.15.3",
     "eslint": "^9.38.0",
     "eslint-config-next": "^16.4.2",
     "postcss": "^8",
-    "tailwindcss": "^3.4.1",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5"
   }
 }
