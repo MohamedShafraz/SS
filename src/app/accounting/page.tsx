@@ -14,7 +14,7 @@ import {
   type ReportPeriodType,
 } from "@/lib/accounting-reports";
 import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
-import { supabase } from "@/lib/supabase";
+import { localDb } from "@/lib/local-db-client";
 import type { BusinessProfile } from "@/types";
 import { BarChart3, Edit3, Plus, ReceiptText, Scale, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -75,17 +75,17 @@ export default function AccountingPage() {
       supplierPaymentsResult,
       shopPaymentsResult,
     ] = await Promise.all([
-      supabase.from("expenses").select("*").order("expense_date", { ascending: false }),
-      supabase
+      localDb.from("expenses").select("*").order("expense_date", { ascending: false }),
+      localDb
         .from("transactions")
         .select("*")
         .or("status.is.null,status.eq.completed")
         .order("transaction_date", { ascending: false }),
-      supabase.from("transaction_items").select("*"),
-      supabase.from("products").select("*"),
-      supabase.from("suppliers").select("*"),
-      supabase.from("supplier_payments").select("*"),
-      supabase.from("shop_payments").select("*"),
+      localDb.from("transaction_items").select("*"),
+      localDb.from("products").select("*"),
+      localDb.from("suppliers").select("*"),
+      localDb.from("supplier_payments").select("*"),
+      localDb.from("shop_payments").select("*"),
     ]);
 
     if (expensesResult.error) toast.error("Failed to load expenses");
@@ -159,8 +159,8 @@ export default function AccountingPage() {
       return;
     }
     const query = editingExpenseId
-      ? supabase.from("expenses").maintenance().update(form).eq("id", editingExpenseId)
-      : supabase.from("expenses").insert([form]);
+      ? localDb.from("expenses").maintenance().update(form).eq("id", editingExpenseId)
+      : localDb.from("expenses").insert([form]);
     const { error } = await query;
     if (error) {
       toast.error("Failed to save expense");
@@ -174,7 +174,7 @@ export default function AccountingPage() {
 
   const deleteExpense = async (id: string) => {
     if (!window.confirm("Delete this expense?")) return;
-    const { error } = await supabase.from("expenses").maintenance().delete().eq("id", id);
+    const { error } = await localDb.from("expenses").maintenance().delete().eq("id", id);
     if (error) toast.error(error.message || "Failed to delete expense");
     else { toast.success("Expense deleted"); fetchAccountingData(); }
   };

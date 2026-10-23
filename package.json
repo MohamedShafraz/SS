@@ -1,24 +1,20 @@
 {
   "name": "pos-system",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "PitchCrafte",
   "private": true,
   "scripts": {
     "dev": "cross-env NODE_OPTIONS=--openssl-legacy-provider next dev",
     "build": "cross-env NODE_OPTIONS=--openssl-legacy-provider next build",
     "start": "next start",
-    "lint": "next lint",
-    "license:keys": "node scripts/license-keys.cjs",
-    "license:server": "node scripts/activation-server.cjs",
-    "license:issue": "node scripts/activation-server.cjs --issue",
-    "license:list": "node scripts/activation-server.cjs --list",
-    "write-license-config": "node scripts/write-license-config.cjs",
-    "register-client": "node scripts/register-client.cjs",
+    "lint": "eslint .",
     "prepare-electron": "node scripts/prepare-electron.cjs",
     "create-appx-assets": "node scripts/create-appx-assets.cjs",
     "build:store-iap": "dotnet publish native/StoreIapBridge/StoreIapBridge.csproj -c Release -r win-x64",
     "dist:win": "npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && npx.cmd --no-install electron-builder --win nsis",
-    "dist:store": "npm.cmd run create-appx-assets && npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && npx.cmd --no-install electron-builder --win appx",
+    "validate:store-config": "node scripts/validate-store-build.cjs --config",
+    "validate:store-artifact": "node scripts/validate-store-build.cjs --artifact",
+    "dist:store": "npm.cmd run validate:store-config && npm.cmd run create-appx-assets && npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && npm.cmd run validate:store-artifact && npx.cmd --no-install electron-builder --win appx",
     "pack:win": "npm.cmd run build && npm.cmd run build:store-iap && npm.cmd run prepare-electron && npx.cmd --no-install electron-builder --win dir"
   },
   "main": "electron/main.cjs",
@@ -33,20 +29,10 @@
     "files": [
       "electron/**",
       ".next/standalone/**",
+      "!.next/standalone/.env*",
       "package.json"
     ],
     "extraResources": [
-      {
-        "from": "client-build/data",
-        "to": "initial-data",
-        "filter": [
-          "pos-local-db.sqlite"
-        ]
-      },
-      {
-        "from": "client-build/license-config.json",
-        "to": "license-config.json"
-      },
       {
         "from": "native/StoreIapBridge/bin/Release/net8.0-windows10.0.26100.0/win-x64/publish",
         "to": "store-iap",
@@ -97,9 +83,9 @@
     "jsonwebtoken": "^9.0.3",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.14.0",
-    "next": "^14.0.0",
-    "react": "^18",
-    "react-dom": "^18",
+    "next": "^16.4.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "react-hot-toast": "^2.4.0",
     "recharts": "^2.10.0",
     "zustand": "^4.4.0"
@@ -114,8 +100,8 @@
     "cross-env": "^10.1.0",
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
-    "eslint": "^8",
-    "eslint-config-next": "^14.0.0",
+    "eslint": "^9.38.0",
+    "eslint-config-next": "^16.4.2",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "typescript": "^5"

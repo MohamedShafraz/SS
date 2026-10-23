@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { readDb, updateRows } from "@/lib/local-store";
-
-const JWT_SECRET =
-  process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 32
-    ? process.env.JWT_SECRET
-    : "offline-pos-local-session-secret-change-before-client-build";
+import { authErrorResponse, requireSameOrigin, requireSession } from "@/lib/server-auth";
 
 async function parseJsonBody(request: NextRequest) {
   try {
@@ -24,15 +19,12 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function requireAdmin(request: NextRequest) {
-  const token = request.cookies.get("auth_token")?.value;
-  if (!token) throw new Error("Unauthorized");
-
-  const payload = jwt.verify(token, JWT_SECRET) as { role?: string };
-  if (payload.role !== "admin") throw new Error("Forbidden");
+  requireSession(request, ["admin"]);
 }
 
 export async function POST(request: NextRequest) {
   try {
+    requireSameOrigin(request);
     requireAdmin(request);
     const body = await parseJsonBody(request);
 
@@ -46,22 +38,23 @@ export async function POST(request: NextRequest) {
     if (!email || !password) {
       return NextResponse.json({ message: "Email and new password are required" }, { status: 400 });
     }
+    if (password.length < 10 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
+      return NextResponse.json({ message: "Password must be at least 10 characters with upper-case, lower-case, and a number" }, { status: 400 });
+    }
 
     const user = readDb().users.find((candidate) => candidate.email === email);
     if (!user) {
       return NextResponse.json({ message: "User not found" }, { status: 404 });
     }
 
-    const { data } = updateRows("users", { password_hash: await bcrypt.hash(password, 10) }, [
+    const { data } = updateRows("users", { password_hash: await bcrypt.hash(password, 12) }, [
       { column: "id", op: "eq", value: user.id },
     ]);
     const { password_hash, ...updatedUser } = data[0];
 
     return NextResponse.json({ user: updatedUser });
   } catch (error: any) {
-    return NextResponse.json(
-      { message: error?.message === "Forbidden" ? "Forbidden" : "Unauthorized" },
-      { status: error?.message === "Forbidden" ? 403 : 401 }
-    );
+    if (["Unauthorized", "Forbidden", "Invalid request origin"].includes(error?.message)) return authErrorResponse(error);
+    return NextResponse.json({ message: "Failed to update password" }, { status: 500 });
   }
 }

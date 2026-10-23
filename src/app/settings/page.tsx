@@ -35,6 +35,7 @@ import {
   getBarcodeFieldAlignment,
   getBarcodeFieldGapMm,
   getBarcodePresets,
+  getVisibleBarcodeFields,
   isBarcodeFieldVisible,
   normalizeBarcodePreset,
 } from "@/lib/barcode-layout";
@@ -106,7 +107,9 @@ export default function SettingsPage() {
     receiptFooterMode: "return_days",
     receiptFooterDays: 7,
     receiptFooterText: "",
-    barcodeStickerPresetId: "builtin-2-column-compact",
+    // New installations default to the physical GA-2408T three-across roll.
+    // A saved preset from an older installation overrides this after loading.
+    barcodeStickerPresetId: "builtin-ga-2408t-102mm-3up-25mm",
     barcodeStickerCustomPresets: [],
     barcodePdfViewerEnabledIds: ["system", "adobe", "edge", "chrome", "firefox"],
     barcodePdfViewerPreferredId: "system",
@@ -479,13 +482,29 @@ export default function SettingsPage() {
     const rows = isGa2408tPreset ? 1 : activeBarcodePreset.rows;
     const columnGap = isGa2408tPreset ? 4 : activeBarcodePreset.columnGapMm;
     const rowGap = isGa2408tPreset ? 0 : activeBarcodePreset.rowGapMm;
-    const sampleLabel = `<div class="label">
-      <div class="business">${escapeSampleText(settings.businessName || "Sample Business")}</div>
-      <div class="product">Sample Product</div>
-      <div class="barcode"></div>
-      <div class="barcode-text">BCD-1789800117556</div>
-      <div class="price">${formatCurrency(1800, settings.currency)}</div>
-    </div>`;
+    const sampleField = (field: BarcodeStickerFieldId) => {
+      const alignment = getBarcodeFieldAlignment(activeBarcodePreset, field);
+      const gap = getBarcodeFieldGapMm(activeBarcodePreset, field);
+      const style = `text-align:${alignment};margin-bottom:${gap}mm;`;
+      if (field === "barcodeImage") return `<div class="barcode" style="${style}"></div>`;
+      const values: Record<Exclude<BarcodeStickerFieldId, "barcodeImage">, string> = {
+        businessName: escapeSampleText(settings.businessName || "Sample Business"),
+        businessAddress: escapeSampleText(settings.address || "123 Main Street"),
+        businessPhone: escapeSampleText(settings.phone || "+94 77 712 3456"),
+        productName: "Sample Product",
+        barcodeText: "BCD-1789800117556",
+        sellingPrice: `Price: ${escapeSampleText(formatCurrency(1800, settings.currency))}`,
+        leastPrice: `Least: ${escapeSampleText(formatCurrency(1650, settings.currency))}`,
+        leastPriceCode: "BM6",
+      };
+      const classes: Record<Exclude<BarcodeStickerFieldId, "barcodeImage">, string> = {
+        businessName: "business", businessAddress: "business address", businessPhone: "business phone",
+        productName: "product", barcodeText: "barcode-text", sellingPrice: "price",
+        leastPrice: "least", leastPriceCode: "code",
+      };
+      return `<div class="${classes[field]}" style="${style}">${values[field]}</div>`;
+    };
+    const sampleLabel = `<div class="label">${getVisibleBarcodeFields(activeBarcodePreset).map(sampleField).join("")}</div>`;
     const labelCount = Math.max(1, Math.min(12, columns * rows));
 
     return `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -499,11 +518,15 @@ export default function SettingsPage() {
       .label { width: ${labelWidth}mm; height: ${labelHeight}mm; overflow: hidden; padding: .7mm .4mm;
         display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1; }
       .business { width: 100%; overflow: hidden; font-size: ${activeBarcodePreset.businessInfoFontSize}px; font-weight: 700; white-space: nowrap; }
+      .address { font-size: ${activeBarcodePreset.businessAddressFontSize || Math.max(5, activeBarcodePreset.businessInfoFontSize - 1)}px; font-weight: 400; }
+      .phone { font-size: ${activeBarcodePreset.businessPhoneFontSize || Math.max(5, activeBarcodePreset.businessInfoFontSize - 1)}px; font-weight: 400; }
       .product { width: 100%; overflow: hidden; margin-top: .5mm; font-size: ${activeBarcodePreset.productNameFontSize}px; font-weight: 700; white-space: nowrap; }
       .barcode { width: 92%; height: ${Math.min(10, activeBarcodePreset.barcodeHeightMm)}mm; margin-top: .7mm;
         background: repeating-linear-gradient(90deg, #111 0, #111 .35mm, transparent .35mm, transparent .65mm, #111 .65mm, #111 .85mm, transparent .85mm, transparent 1.25mm); }
       .barcode-text { margin-top: .25mm; font-size: ${activeBarcodePreset.barcodeTextFontSize || Math.max(6, activeBarcodePreset.businessInfoFontSize)}px; white-space: nowrap; }
       .price { margin-top: .45mm; font-size: ${activeBarcodePreset.sellingPriceFontSize}px; font-weight: 800; }
+      .least { font-size: ${activeBarcodePreset.leastPriceFontSize}px; }
+      .code { font-size: ${activeBarcodePreset.leastPriceCodeFontSize}px; font-weight: 700; }
     </style></head><body><div class="sheet">${Array.from({ length: labelCount }, () => sampleLabel).join("")}</div></body></html>`;
   };
 
@@ -1559,6 +1582,11 @@ export default function SettingsPage() {
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-4">
+              {isGa2408tPreset && (
+                <p className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                  Vertical roll feed is fixed at 102 × 25 mm with three stickers across. Copies fill left to right; saved orientation values from older versions are safely ignored for this media.
+                </p>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-900 mb-2">Active Preset</label>

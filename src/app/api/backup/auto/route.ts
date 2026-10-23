@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import {
   accessSync,
   constants,
@@ -9,6 +9,7 @@ import {
 } from "fs";
 import { join } from "path";
 import { backupDb, insertRows, readDb, updateRows } from "@/lib/local-store";
+import { authErrorResponse, requireSameOrigin, requireSession } from "@/lib/server-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -86,7 +87,13 @@ function pruneOldBackups(folderPath: string) {
   }
 }
 
-export async function POST() {
+export async function POST(request: NextRequest) {
+  try {
+    requireSameOrigin(request);
+    requireSession(request, ["admin"]);
+  } catch (error) {
+    return authErrorResponse(error);
+  }
   const settingsRow = readSettingsRow();
   const settings = isSettingsRecord(settingsRow?.value) ? settingsRow.value : null;
 

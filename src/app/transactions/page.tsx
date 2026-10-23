@@ -4,7 +4,7 @@ import { MainLayout } from "@/components/layout";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Eye, Download, Printer, Trash2, AlertCircle } from "lucide-react";
 import toast from "react-hot-toast";
-import { supabase } from "@/lib/supabase";
+import { localDb } from "@/lib/local-db-client";
 import { useAuth } from "@/lib/auth-context";
 import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
 import type { BusinessProfile, ProductVariant } from "@/types";
@@ -73,7 +73,7 @@ export default function TransactionsPage() {
       if (isActive()) {
         setLoading(true);
       }
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from("transactions")
         .select("*")
         .or("status.is.null,status.eq.completed")
@@ -116,7 +116,7 @@ export default function TransactionsPage() {
     }
   }, []);
 
-  // Fetch transactions from Supabase
+  // Fetch transactions from the local SQLite API.
   useEffect(() => {
     let active = true;
 
@@ -227,7 +227,7 @@ export default function TransactionsPage() {
   const loadTransactionDetails = async (transaction: Transaction) => {
     if (transaction.items?.length) return transaction;
 
-    const { data, error } = await supabase
+    const { data, error } = await localDb
       .from("transaction_items")
       .select("*,products")
       .eq("transaction_id", transaction.id);
@@ -242,7 +242,7 @@ export default function TransactionsPage() {
     let variants: ProductVariant[] = [];
 
     if (variantIds.length > 0) {
-      const { data: variantRows } = await supabase
+      const { data: variantRows } = await localDb
         .from("product_variants")
         .select("*");
       variants = ((variantRows || []) as ProductVariant[]).filter((variant) =>
@@ -260,7 +260,7 @@ export default function TransactionsPage() {
     let fallbackProducts: Array<{ id: string; name: string }> = [];
 
     if (fallbackProductIds.length > 0) {
-      const { data: productRows } = await supabase
+      const { data: productRows } = await localDb
         .from("products")
         .select("*");
       fallbackProducts = ((productRows || []) as Array<{ id: string; name: string }>).filter((product) =>
@@ -304,7 +304,7 @@ export default function TransactionsPage() {
       `;
     }).join("");
 
-    return `<!doctype html><html><head><meta charset="utf-8" /><title>Receipt ${transaction.id}</title><style>
+    return `<!doctype html><html><head><meta charset="utf-8" /><title>Receipt ${escapeHtml(transaction.id)}</title><style>
       @page { size: ${width} auto; margin: 4mm; }
       body { width: ${width}; margin: 0 auto; font-family: Arial, sans-serif; color: #111827; font-size: 12px; }
       .receipt { padding: 8px; }
@@ -318,18 +318,18 @@ export default function TransactionsPage() {
       .total { font-size: 16px; font-weight: 700; }
     </style></head><body><div class="receipt">
       ${showBusinessInfo ? `<div class="center">
-        ${receiptSettings.logoImage ? `<img class="logo" src="${receiptSettings.logoImage}" alt="Logo" />` : ""}
-        <div class="title">${receiptSettings.businessName || "MSHPOS"}</div>
-        <div class="muted">${receiptSettings.address || ""}</div>
-        <div class="muted">${receiptSettings.phone || ""}</div>
+        ${/^data:image\/(?:png|jpeg|webp|gif);base64,[a-z0-9+/=]+$/i.test(receiptSettings.logoImage || "") ? `<img class="logo" src="${receiptSettings.logoImage}" alt="Logo" />` : ""}
+        <div class="title">${escapeHtml(receiptSettings.businessName || "MSHPOS")}</div>
+        <div class="muted">${escapeHtml(receiptSettings.address || "")}</div>
+        <div class="muted">${escapeHtml(receiptSettings.phone || "")}</div>
       </div><div class="divider"></div>` : ""}
-      <div class="line"><span>Transaction</span><span>${transaction.id}</span></div>
+      <div class="line"><span>Transaction</span><span>${escapeHtml(transaction.id)}</span></div>
       <div class="line"><span>Date</span><span>${new Date(transaction.transaction_date).toLocaleString()}</span></div>
       ${transaction.sale_type === "shop" || transaction.shop_id ? `<div class="line"><span>Shop</span><span>${escapeHtml(transaction.customer_name || "Shop")}</span></div>` : ""}
-      <div class="line"><span>Payment</span><span>${transaction.payment_method}</span></div>
+      <div class="line"><span>Payment</span><span>${escapeHtml(transaction.payment_method)}</span></div>
       ${transaction.amount_paid != null ? `<div class="line"><span>Received</span><span>${formatCurrency(transaction.amount_paid, currency)}</span></div>` : ""}
       ${transaction.balance_amount ? `<div class="line"><span>Balance</span><span>${formatCurrency(transaction.balance_amount, currency)}</span></div>` : ""}
-      ${transaction.sale_type === "shop" || transaction.shop_id ? `<div class="line"><span>Due</span><span>${formatCurrency(transaction.due_amount || 0, currency)}</span></div><div class="line"><span>Status</span><span>${transaction.payment_status || "paid"}</span></div>` : ""}
+      ${transaction.sale_type === "shop" || transaction.shop_id ? `<div class="line"><span>Due</span><span>${formatCurrency(transaction.due_amount || 0, currency)}</span></div><div class="line"><span>Status</span><span>${escapeHtml(transaction.payment_status || "paid")}</span></div>` : ""}
       <div class="divider"></div>
       ${rows || `<div class="center muted">No item rows found</div>`}
       <div class="divider"></div>
@@ -338,7 +338,7 @@ export default function TransactionsPage() {
       <div class="line"><span>Tax</span><span>${formatCurrency(transaction.tax_amount, currency)}</span></div>
       <div class="line total"><span>Total</span><span>${formatCurrency(transaction.total_amount, currency)}</span></div>
       <div class="divider"></div>
-      ${footer ? `<div class="center muted">${footer}</div>` : ""}
+      ${footer ? `<div class="center muted">${escapeHtml(footer)}</div>` : ""}
       <div class="center muted">Thank you</div>
     </div></body></html>`;
   };

@@ -5,19 +5,12 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { Trash2, Printer, Check, X, Barcode, Eye, ArrowLeft, ShoppingCart, RotateCcw } from "lucide-react";
 import toast from "react-hot-toast";
 import { getOfflineImageSrc, OfflineProductImage } from "@/components/OfflineProductImage";
-import { supabase, fetchProductsWithVariants, findVariantByBarcode } from "@/lib/supabase";
+import { localDb, fetchProductsWithVariants, findVariantByBarcode } from "@/lib/local-db-client";
 import { BusinessProfile, ProductVariant } from "@/types";
 import { DEFAULT_CURRENCY, discountUnitLabel, formatCurrency } from "@/lib/currency";
 import {
   fetchReturnableTransactionWithItems,
-  createReturn,
-  addReturnItems,
-  addReplacementItems,
-  createReplacementTransaction,
-  createReplacementTransactionItems,
-  createReturnTransaction,
-  createReturnTransactionItems,
-  completeReturn,
+  processReturn,
 } from "@/lib/returns";
 
 interface CartItem {
@@ -223,7 +216,6 @@ function POSContent() {
   const returnBarcodeEnabled = receiptSettings.returnBarcodeEnabled !== false;
   const replacementBarcodeEnabled = receiptSettings.replacementBarcodeEnabled !== false;
   const replacementStockProtectionEnabled = receiptSettings.replacementStockProtectionEnabled !== false;
-  const partialReturnProtectionEnabled = receiptSettings.partialReturnProtectionEnabled !== false;
   const taxCalculationEnabled = receiptSettings.taxCalculationEnabled === true;
   const shopBillingEnabled = receiptSettings.shopBillingEnabled === true;
   const isShopSale = shopBillingEnabled && saleType === "shop";
@@ -286,7 +278,7 @@ function POSContent() {
   }, []);
 
   const fetchShopAccounts = useCallback(async (isActive: () => boolean = () => true) => {
-    const { data, error } = await supabase
+    const { data, error } = await localDb
       .from("shop_accounts")
       .select("*")
       .order("name", { ascending: true });
@@ -372,10 +364,7 @@ function POSContent() {
     }
 
     try {
-      const result = await fetchReturnableTransactionWithItems(
-        transactionId,
-        partialReturnProtectionEnabled
-      );
+      const result = await fetchReturnableTransactionWithItems(transactionId);
       if (!result.ok) {
         const message =
           result.reason === "non_returnable"
@@ -427,139 +416,31 @@ function POSContent() {
     }
 
     try {
-      // Step 1: Create return record
-      const returnRecord = await createReturn(
-        originalTransaction.id,
-        returnReason,
-        returnNotes
-      );
-
-      if (!returnRecord) {
-        toast.error("Failed to create return record");
-        return;
-      }
-
-      // Step 2: Add returned items
-      const returnItems = originalItems
-        .filter((item) => selectedReturnItems.has(item.id))
-        .map((item) => ({
-          product_id: item.product_id,
-          variant_id: item.variant_id ?? null,
-          quantity: item.quantity,
-          refund_amount: item.subtotal,
-        }));
-
-      const itemsAdded = await addReturnItems(returnRecord.id, returnItems);
-      if (!itemsAdded) {
-        toast.error("Failed to add return items");
-        return;
-      }
-
-      const restocked = await restockReturnedItems(returnItems);
-      if (!restocked) {
-        toast.error("Failed to restock returned items");
-        return;
-      }
-
-      const refundTotal = returnItems.reduce((sum, item) => sum + item.refund_amount, 0);
-      const returnTransaction = await createReturnTransaction(
-        returnRecord.id,
-        refundTotal,
-        originalTransaction.payment_method || paymentMethod
-      );
-
-      if (!returnTransaction) {
-        toast.error("Failed to create return transaction");
-        return;
-      }
-
-      const returnTransactionItemsAdded = await createReturnTransactionItems(
-        returnTransaction.id,
-        originalItems
+      const { taxAmount: replacementTaxAmount } = calculateReplacementTotals();
+      await processReturn({
+        originalTransactionId: originalTransaction.id,
+        reason: returnReason,
+        notes: returnNotes,
+        returnedItems: originalItems
           .filter((item) => selectedReturnItems.has(item.id))
-          .map((item) => ({
-            product_id: item.product_id,
-            variant_id: item.variant_id ?? null,
-            quantity: -Math.abs(item.quantity),
-            unit_price: item.unit_price,
-            discount: 0,
-            subtotal: -Math.abs(item.subtotal),
-          }))
-      );
-
-      if (!returnTransactionItemsAdded) {
-        toast.error("Failed to create return transaction items");
-        return;
-      }
-
-      // Step 3: If there are replacements, add them
-      if (replacementCart.length > 0) {
-        const replacementItems = replacementCart.map((item) => ({
-          product_id: item.product_id,
-          variant_id: item.variant_id || undefined,
-          quantity: item.quantity,
-          replacement_price: item.price * item.quantity,
-        }));
-
-        const replacementsAdded = await addReplacementItems(
-          returnRecord.id,
-          replacementItems
-        );
-
-        if (!replacementsAdded) {
-          toast.error("Failed to add replacement items");
-          return;
-        }
-
-        // Create replacement transaction
-        const { globalDiscount, taxAmount: replacementTaxAmount, total } = calculateReplacementTotals();
-        const txn = await createReplacementTransaction(
-          returnRecord.id,
-          total,
-          globalDiscount,
-          paymentMethod,
-          replacementTaxAmount
-        );
-
-        if (!txn) {
-          toast.error("Failed to create replacement transaction");
-          return;
-        }
-
-        const replacementTransactionItemsAdded = await createReplacementTransactionItems(
-          txn.id,
-          replacementCart.map((item) => {
-            const itemTotal = item.price * item.quantity;
-            const itemDiscount =
-              item.discountType === "percentage"
-                ? (itemTotal * item.discount) / 100
-                : Math.min(itemTotal, item.discount);
-
-            return {
-              product_id: item.product_id,
-              variant_id: item.variant_id ?? null,
-              quantity: item.quantity,
-              unit_price: item.price,
-              discount: itemDiscount,
-              subtotal: Math.max(0, itemTotal - itemDiscount),
-            };
-          })
-        );
-
-        if (!replacementTransactionItemsAdded) {
-          toast.error("Failed to create replacement transaction items");
-          return;
-        }
-
-        const replacementStockUpdated = await updateReplacementStocks();
-        if (!replacementStockUpdated) {
-          toast.error("Failed to update replacement stock");
-          return;
-        }
-      }
-
-      // Mark return as completed
-      await completeReturn(returnRecord.id);
+          .map((item) => ({ transactionItemId: item.id, quantity: item.quantity })),
+        replacementItems: replacementCart.map((item) => {
+          const itemTotal = item.price * item.quantity;
+          const itemDiscount = item.discountType === "percentage"
+            ? (itemTotal * item.discount) / 100
+            : Math.min(itemTotal, item.discount);
+          return {
+            productId: item.product_id,
+            variantId: item.variant_id ?? null,
+            quantity: item.quantity,
+            unitPrice: item.price,
+            discount: itemDiscount,
+            subtotal: Math.max(0, itemTotal - itemDiscount),
+          };
+        }),
+        replacementPaymentMethod: paymentMethod,
+        replacementTaxAmount,
+      });
 
       toast.success(
         replacementCart.length > 0
@@ -567,11 +448,11 @@ function POSContent() {
           : "Return processed successfully!"
       );
 
-      // Reset returns mode
+      await fetchProducts();
       resetReturnsMode();
     } catch (error) {
       console.error("Error:", error);
-      toast.error("Error processing return");
+      toast.error(error instanceof Error ? error.message : "Error processing return");
     }
   };
 
@@ -596,95 +477,6 @@ function POSContent() {
       ? Math.max(0, taxableTotal * (Number(receiptSettings.taxRate || 0) / 100))
       : 0;
     return { subtotal, globalDiscount: 0, taxAmount, total: taxableTotal + taxAmount };
-  };
-
-  const restockReturnedItems = async (
-    items: { product_id: string; variant_id?: string | null; quantity: number }[]
-  ) => {
-    for (const item of items) {
-      if (item.variant_id) {
-        const variant = products
-          .flatMap((product) => product.variants || [])
-          .find((variant) => variant.id === item.variant_id);
-
-        if (!variant) return false;
-
-        const { error } = await supabase
-          .from("product_variants")
-          .update({ quantity: variant.quantity + item.quantity, updated_at: new Date().toISOString() })
-          .eq("id", item.variant_id);
-
-        if (error) {
-          console.error("Error restocking variant:", error);
-          return false;
-        }
-      } else {
-        const product = products.find((product) => product.id === item.product_id);
-        if (!product) return false;
-
-        const { error } = await supabase
-          .from("products")
-          .update({ quantity: product.quantity + item.quantity, updated_at: new Date().toISOString() })
-          .eq("id", item.product_id);
-
-        if (error) {
-          console.error("Error restocking product:", error);
-          return false;
-        }
-      }
-    }
-
-    return true;
-  };
-
-  // NEW: Update stocks for replacement items
-  const updateReplacementStocks = async () => {
-    for (const item of replacementCart) {
-      if (item.variant_id) {
-        const variant = products
-          .flatMap((p) => p.variants || [])
-          .find((v) => v.id === item.variant_id);
-
-        if (variant) {
-          if (replacementStockProtectionEnabled && variant.quantity < item.quantity) {
-            toast.error(`Only ${variant.quantity} available for ${item.name}`);
-            return false;
-          }
-          const { error } = await supabase
-            .from("product_variants")
-            .update({ quantity: variant.quantity - item.quantity, updated_at: new Date().toISOString() })
-            .eq("id", item.variant_id);
-
-          if (error) {
-            console.error("Error updating replacement variant quantity:", error);
-            return false;
-          }
-        } else {
-          return false;
-        }
-      } else {
-        const product = products.find((p) => p.id === item.product_id);
-        if (product) {
-          if (replacementStockProtectionEnabled && product.quantity < item.quantity) {
-            toast.error(`Only ${product.quantity} available for ${item.name}`);
-            return false;
-          }
-          const { error } = await supabase
-            .from("products")
-            .update({ quantity: product.quantity - item.quantity, updated_at: new Date().toISOString() })
-            .eq("id", item.product_id);
-
-          if (error) {
-            console.error("Error updating replacement product quantity:", error);
-            return false;
-          }
-        } else {
-          return false;
-        }
-      }
-    }
-
-    return true;
   };
 
   // NEW: Reset returns mode
@@ -1213,25 +1005,6 @@ function POSContent() {
     return paid > 0 ? "partial" : "unpaid";
   };
 
-  const updateShopTotals = async (shopId: string, billedDelta: number, paidDelta: number) => {
-    const { data } = await supabase.from("shop_accounts").select("*").eq("id", shopId).maybeSingle();
-    const shop = data as ShopAccount | null;
-    if (!shop) return;
-
-    const totalBilled = Number(shop.total_billed || 0) + billedDelta;
-    const totalPaid = Number(shop.total_paid || 0) + paidDelta;
-    const dueAmount = Math.max(0, totalBilled - totalPaid);
-    await supabase
-      .from("shop_accounts")
-      .update({
-        total_billed: totalBilled,
-        total_paid: totalPaid,
-        due_amount: dueAmount,
-        payment_status: paymentStatusFor(totalPaid, totalBilled),
-      })
-      .eq("id", shopId);
-  };
-
   const resolveShopAccount = async () => {
     if (!isShopSale) return null;
     if (selectedShop) return selectedShop;
@@ -1242,7 +1015,7 @@ function POSContent() {
     const existing = shopAccounts.find((shop) => shop.name.trim().toLowerCase() === name.toLowerCase());
     if (existing) return existing;
 
-    const { data, error } = await supabase
+    const { data, error } = await localDb
       .from("shop_accounts")
       .insert([
         {
@@ -1305,12 +1078,27 @@ function POSContent() {
     }
 
     try {
-      // Save transaction to local offline storage
-      const { data: transactionData, error: transactionError } = await supabase
-        .from("transactions")
-        .insert([
-          {
-            transaction_date: new Date().toISOString().split('T')[0],
+      const items = cart.map((item) => {
+        const itemTotal = item.price * item.quantity;
+        const safeDiscount = capLineDiscount(item);
+        const itemDiscount = item.discountType === "percentage"
+          ? (itemTotal * safeDiscount) / 100
+          : safeDiscount;
+        return {
+          product_id: item.product_id,
+          variant_id: item.variant_id ?? null,
+          quantity: item.quantity,
+          unit_price: item.price,
+          discount: itemDiscount,
+          subtotal: Math.max(minimumLineTotal(item), itemTotal - itemDiscount),
+        };
+      });
+      const checkoutResponse = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transaction: {
+            transaction_date: new Date().toISOString(),
             total_amount: total,
             discount_amount: globalDiscount,
             tax_amount: taxAmount,
@@ -1318,8 +1106,6 @@ function POSContent() {
             balance_amount: balance,
             payment_method: paymentMethod,
             status: "completed",
-            stripe_session_id: null,
-            user_id: null,
             is_replacement_transaction: false,
             original_return_id: null,
             shop_id: shopAccount?.id || null,
@@ -1328,111 +1114,24 @@ function POSContent() {
             payment_status: paymentStatus,
             due_amount: dueAmount,
           },
-        ])
-        .select();
-
-      if (transactionError) {
-        console.error("Error saving transaction:", transactionError);
-        toast.error("Failed to save transaction");
-        return;
+          items,
+        }),
+      });
+      const checkout = await checkoutResponse.json() as {
+        transaction?: { id?: string };
+        message?: string;
+      };
+      if (!checkoutResponse.ok || !checkout.transaction?.id) {
+        throw new Error(checkout.message || "Failed to save transaction");
       }
-
-      // Save transaction items
-      if (transactionData && transactionData.length > 0) {
-        const transactionId = transactionData[0].id;
-        const items = cart.map((item) => {
-          const itemTotal = item.price * item.quantity;
-          let itemDiscount = 0;
-          
-          const safeDiscount = capLineDiscount(item);
-
-          if (item.discountType === "percentage") {
-            itemDiscount = (itemTotal * safeDiscount) / 100;
-          } else {
-            itemDiscount = safeDiscount;
-          }
-          const lineSubtotal = Math.max(minimumLineTotal(item), itemTotal - itemDiscount);
-          
-          return {
-            transaction_id: transactionId,
-            product_id: item.product_id,
-            variant_id: item.variant_id ?? null,
-            quantity: item.quantity,
-            unit_price: item.price,
-            discount: itemDiscount,
-            subtotal: lineSubtotal,
-          };
-        });
-
-        const { error: itemsError } = await supabase
-          .from("transaction_items")
-          .insert(items);
-
-        if (itemsError) {
-          console.error("Error saving transaction items:", itemsError);
-          toast.error("Failed to save transaction items");
-          return;
-        }
-
-        if (isShopSale && shopAccount) {
-          await updateShopTotals(shopAccount.id, total, paid);
-          if (paid > 0) {
-            await supabase.from("shop_payments").insert([
-              {
-                shop_id: shopAccount.id,
-                transaction_id: transactionId,
-                payment_date: new Date().toISOString(),
-                amount: paid,
-                payment_method: paymentMethod,
-                notes: "Initial payment",
-              },
-            ]);
-          }
-          await fetchShopAccounts();
-        }
-
-        // Update product/variant quantities
-        for (const cartItem of cart) {
-          if (cartItem.variant_id) {
-            // Update variant stock
-            const variant = products
-              .flatMap((p) => p.variants || [])
-              .find((v) => v.id === cartItem.variant_id);
-            
-            if (variant) {
-              const newQuantity = variant.quantity - cartItem.quantity;
-              const { error: updateError } = await supabase
-                .from("product_variants")
-                .update({ quantity: newQuantity, updated_at: new Date().toISOString() })
-                .eq("id", cartItem.variant_id);
-
-              if (updateError) {
-                console.error("Error updating variant quantity:", updateError);
-              }
-            }
-          } else {
-            // Update product stock
-            const product = products.find((p) => p.id === cartItem.id);
-            if (product) {
-              const newQuantity = product.quantity - cartItem.quantity;
-              const { error: updateError } = await supabase
-                .from("products")
-                .update({ quantity: newQuantity })
-                .eq("id", cartItem.id);
-
-              if (updateError) {
-                console.error("Error updating product quantity:", updateError);
-              }
-            }
-          }
-        }
-      }
+      const transactionId = checkout.transaction.id;
+      if (isShopSale) await fetchShopAccounts();
 
       // Refresh products after checkout
       await fetchProducts();
 
       const completedReceipt: ReceiptPreview = {
-        transactionId: transactionData?.[0]?.id || "pending",
+        transactionId,
         transactionDate: new Date().toISOString(),
         items: cart.map((item) => ({ ...item })),
         subtotal,
@@ -1512,13 +1211,20 @@ function POSContent() {
     return Math.max(minimumLineTotal(item), itemTotal - itemDiscount);
   };
 
+  const escapeReceiptHtml = (value: unknown) => String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
   const buildReceiptHtml = (receipt: ReceiptPreview) => {
     const width = receiptPaperWidth === "58mm" ? "58mm" : "80mm";
     const isCompact = receiptLayout === "compact";
     const isDetailed = receiptLayout === "detailed";
     const rows = receipt.items
       .map((item) => {
-        const label = variantLabel(item);
+        const label = escapeReceiptHtml(variantLabel(item));
         const variant = label ? `<div class="muted">${label}</div>` : "";
         const discountText = isDetailed && item.discount
           ? `<div class="muted">Discount: ${item.discount}${item.discountType === "percentage" ? "%" : ` ${discountCurrencyLabel}`}</div>`
@@ -1527,7 +1233,7 @@ function POSContent() {
         return `
           <div class="line item">
             <div>
-              <strong>${item.name}</strong>
+              <strong>${escapeReceiptHtml(item.name)}</strong>
               ${variant}
               ${discountText}
               <div class="muted">${item.quantity} x ${money(Math.round(item.price))}</div>
@@ -1561,20 +1267,20 @@ function POSContent() {
           <div class="receipt">
             ${showReceiptBusinessInfo ? `
               <div class="center">
-                ${receiptLogoImage ? `<img class="logo" src="${receiptLogoImage}" alt="Logo" />` : ""}
-                <div class="title">${receiptSettings.businessName}</div>
-                <div class="muted">${receiptSettings.address}</div>
-                <div class="muted">${receiptSettings.phone}</div>
-                ${isDetailed ? `<div class="muted">${receiptSettings.email}</div>` : ""}
+                ${/^data:image\/(?:png|jpeg|webp|gif);base64,[a-z0-9+/=]+$/i.test(receiptLogoImage || "") ? `<img class="logo" src="${receiptLogoImage}" alt="Logo" />` : ""}
+                <div class="title">${escapeReceiptHtml(receiptSettings.businessName)}</div>
+                <div class="muted">${escapeReceiptHtml(receiptSettings.address)}</div>
+                <div class="muted">${escapeReceiptHtml(receiptSettings.phone)}</div>
+                ${isDetailed ? `<div class="muted">${escapeReceiptHtml(receiptSettings.email)}</div>` : ""}
               </div>
               <div class="divider"></div>
             ` : ""}
-            <div class="line"><span>Bill</span><span>${receipt.transactionId}</span></div>
+            <div class="line"><span>Bill</span><span>${escapeReceiptHtml(receipt.transactionId)}</span></div>
             <div class="line"><span>Date</span><span>${new Date(receipt.transactionDate).toLocaleString()}</span></div>
-            ${receipt.saleType === "shop" ? `<div class="line"><span>Shop</span><span>${receipt.customerName || ""}</span></div>` : ""}
-            <div class="line"><span>Payment</span><span>${receipt.paymentMethod}</span></div>
+            ${receipt.saleType === "shop" ? `<div class="line"><span>Shop</span><span>${escapeReceiptHtml(receipt.customerName)}</span></div>` : ""}
+            <div class="line"><span>Payment</span><span>${escapeReceiptHtml(receipt.paymentMethod)}</span></div>
             ${receipt.saleType === "shop" ? `
-              <div class="line"><span>Status</span><span>${receipt.paymentStatus || "paid"}</span></div>
+              <div class="line"><span>Status</span><span>${escapeReceiptHtml(receipt.paymentStatus || "paid")}</span></div>
               <div class="line"><span>Paid</span><span>${money(Math.round(receipt.amountPaid || 0))}</span></div>
               <div class="line"><span>Due</span><span>${money(Math.round(receipt.dueAmount || 0))}</span></div>
             ` : receipt.paymentMethod === "cash" ? `
@@ -1589,7 +1295,7 @@ function POSContent() {
             ${taxCalculationEnabled ? `<div class="line"><span>Tax</span><span>${money(Math.round(receipt.tax))}</span></div>` : ""}
             <div class="line total"><span>Total</span><span>${money(Math.round(receipt.total))}</span></div>
             <div class="divider"></div>
-            ${receiptFooterText ? `<div class="center muted">${receiptFooterText}</div>` : ""}
+            ${receiptFooterText ? `<div class="center muted">${escapeReceiptHtml(receiptFooterText)}</div>` : ""}
             <div class="center muted">Thank you</div>
           </div>
           <script>window.onload = () => { window.focus(); window.print(); };</script>

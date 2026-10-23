@@ -2,8 +2,8 @@
 
 import { MainLayout } from "@/components/layout";
 import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
-import { supabase } from "@/lib/supabase";
-import type { BusinessProfile, PaymentStatus, ShopAccountRow, ShopPaymentRow, TransactionRow } from "@/types";
+import { localDb } from "@/lib/local-db-client";
+import type { BusinessProfile, ShopAccountRow, ShopPaymentRow, TransactionRow } from "@/types";
 import { CreditCard, Edit3, ReceiptText, Store, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
@@ -12,12 +12,6 @@ import { useAuth } from "@/lib/auth-context";
 type ShopBill = TransactionRow & {
   shopName: string;
 };
-
-function paymentStatusFor(paid: number, total: number): PaymentStatus {
-  const due = Math.max(0, total - paid);
-  if (due <= 0) return "paid";
-  return paid > 0 ? "partial" : "unpaid";
-}
 
 export default function ShopsPage() {
   const { user } = useAuth();
@@ -37,13 +31,13 @@ export default function ShopsPage() {
 
   const fetchData = useCallback(async () => {
     const [shopsResult, transactionsResult, paymentsResult] = await Promise.all([
-      supabase.from("shop_accounts").select("*").order("name", { ascending: true }),
-      supabase
+      localDb.from("shop_accounts").select("*").order("name", { ascending: true }),
+      localDb
         .from("transactions")
         .select("*")
         .or("status.is.null,status.eq.completed")
         .order("transaction_date", { ascending: false }),
-      supabase.from("shop_payments").select("*").order("payment_date", { ascending: false }),
+      localDb.from("shop_payments").select("*").order("payment_date", { ascending: false }),
     ]);
 
     if (shopsResult.error) toast.error("Failed to load shop accounts");
@@ -108,46 +102,18 @@ export default function ShopsPage() {
 
     try {
       setSavingPayment(true);
-      const nextPaid = Number(paymentTarget.amount_paid || 0) + amount;
-      const nextDue = Math.max(0, Number(paymentTarget.total_amount || 0) - nextPaid);
-      const nextStatus = paymentStatusFor(nextPaid, Number(paymentTarget.total_amount || 0));
-
-      const paymentResult = await supabase.from("shop_payments").insert([
-        {
-          shop_id: paymentTarget.shop_id,
-          transaction_id: paymentTarget.id,
-          payment_date: new Date().toISOString(),
+      const response = await fetch("/api/shop-payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transactionId: paymentTarget.id,
           amount,
-          payment_method: paymentMethod,
+          paymentMethod,
           notes: paymentNotes,
-        },
-      ]);
-      if (paymentResult.error) throw new Error(paymentResult.error.message);
-
-      const transactionResult = await supabase
-        .from("transactions")
-        .update({
-          amount_paid: nextPaid,
-          due_amount: nextDue,
-          payment_status: nextStatus,
-        })
-        .eq("id", paymentTarget.id);
-      if (transactionResult.error) throw new Error(transactionResult.error.message);
-
-      const shop = shopMap.get(paymentTarget.shop_id);
-      if (shop) {
-        const totalPaid = Number(shop.total_paid || 0) + amount;
-        const dueAmount = Math.max(0, Number(shop.total_billed || 0) - totalPaid);
-        const shopResult = await supabase
-          .from("shop_accounts")
-          .update({
-            total_paid: totalPaid,
-            due_amount: dueAmount,
-            payment_status: paymentStatusFor(totalPaid, Number(shop.total_billed || 0)),
-          })
-          .eq("id", shop.id);
-        if (shopResult.error) throw new Error(shopResult.error.message);
-      }
+        }),
+      });
+      const result = await response.json() as { message?: string };
+      if (!response.ok) throw new Error(result.message || "Failed to record payment");
 
       toast.success("Payment recorded");
       setPaymentTarget(null);
@@ -167,14 +133,14 @@ export default function ShopsPage() {
     const phone = window.prompt("Phone", shop.phone || "") ?? (shop.phone || "");
     const address = window.prompt("Address", shop.address || "") ?? (shop.address || "");
     const notes = window.prompt("Notes", shop.notes || "") ?? (shop.notes || "");
-    const { error } = await supabase.from("shop_accounts").maintenance().update({ name, phone, address, notes }).eq("id", shop.id);
+    const { error } = await localDb.from("shop_accounts").maintenance().update({ name, phone, address, notes }).eq("id", shop.id);
     if (error) toast.error(error.message || "Failed to update shop");
     else { toast.success("Shop updated"); fetchData(); }
   };
 
   const deleteShop = async (shop: ShopAccountRow) => {
     if (!window.confirm("Delete this shop account? Accounts with bills cannot be deleted.")) return;
-    const { error } = await supabase.from("shop_accounts").maintenance().delete().eq("id", shop.id);
+    const { error } = await localDb.from("shop_accounts").maintenance().delete().eq("id", shop.id);
     if (error) toast.error(error.message || "Failed to delete shop");
     else { toast.success("Shop deleted"); fetchData(); }
   };
@@ -185,15 +151,25 @@ export default function ShopsPage() {
     const amount = Number(amountText);
     if (!Number.isFinite(amount) || amount <= 0) { toast.error("Enter a valid payment amount"); return; }
     const notes = window.prompt("Notes", payment.notes || "") ?? (payment.notes || "");
-    const { error } = await supabase.from("shop_payments").maintenance().update({ amount, notes }).eq("id", payment.id);
-    if (error) toast.error(error.message || "Failed to update payment");
+    const response = await fetch("/api/shop-payments", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: payment.id, amount, notes }),
+    });
+    const result = await response.json() as { message?: string };
+    if (!response.ok) toast.error(result.message || "Failed to update payment");
     else { toast.success("Payment updated"); fetchData(); }
   };
 
   const deletePayment = async (payment: ShopPaymentRow) => {
     if (!window.confirm("Delete this payment and recalculate the bill?")) return;
-    const { error } = await supabase.from("shop_payments").maintenance().delete().eq("id", payment.id);
-    if (error) toast.error(error.message || "Failed to delete payment");
+    const response = await fetch("/api/shop-payments", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: payment.id }),
+    });
+    const result = await response.json() as { message?: string };
+    if (!response.ok) toast.error(result.message || "Failed to delete payment");
     else { toast.success("Payment deleted"); fetchData(); }
   };
 

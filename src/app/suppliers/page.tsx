@@ -2,7 +2,7 @@
 
 import { MainLayout } from "@/components/layout";
 import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
-import { supabase } from "@/lib/supabase";
+import { localDb } from "@/lib/local-db-client";
 import type { BusinessProfile } from "@/types";
 import { Edit3, Plus, Trash2, Truck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -35,7 +35,7 @@ export default function SuppliersPage() {
   });
 
   const fetchSuppliers = useCallback(async () => {
-    const { data, error } = await supabase
+    const { data, error } = await localDb
       .from("suppliers")
       .select("*")
       .order("created_at", { ascending: false });
@@ -67,8 +67,8 @@ export default function SuppliersPage() {
     const due = Math.max(0, total - paid);
     const status = due <= 0 && total > 0 ? "paid" : paid > 0 ? "partial" : "unpaid";
     const query = editingId
-      ? supabase.from("suppliers").maintenance().update({ ...form, due_amount: due, payment_status: status })
-      : supabase.from("suppliers").insert([{ ...form, due_amount: due, payment_status: status }]).select();
+      ? localDb.from("suppliers").maintenance().update({ ...form, due_amount: due, payment_status: status })
+      : localDb.from("suppliers").insert([{ ...form, due_amount: due, payment_status: status }]).select();
     if (editingId) query.eq("id", editingId);
     const { data, error } = await query;
     if (error) {
@@ -77,7 +77,7 @@ export default function SuppliersPage() {
     }
     const supplier = ((data || []) as Supplier[])[0];
     if (!editingId && supplier && paid > 0) {
-      await supabase.from("supplier_payments").insert([
+      await localDb.from("supplier_payments").insert([
         { supplier_id: supplier.id, payment_date: new Date().toISOString(), amount: paid, notes: "Initial payment" },
       ]);
     }
@@ -94,7 +94,7 @@ export default function SuppliersPage() {
 
   const deleteSupplier = async (id: string) => {
     if (!window.confirm("Delete this supplier? Payment history will also be removed.")) return;
-    const { error } = await supabase.from("suppliers").maintenance().delete().eq("id", id);
+    const { error } = await localDb.from("suppliers").maintenance().delete().eq("id", id);
     if (error) toast.error(error.message || "Failed to delete supplier");
     else { toast.success("Supplier deleted"); fetchSuppliers(); }
   };

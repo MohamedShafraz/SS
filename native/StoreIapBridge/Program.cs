@@ -12,74 +12,27 @@ internal static class Program
         try
         {
             var options = BridgeOptions.Parse(args);
-            if (string.IsNullOrWhiteSpace(options.ProductId))
-            {
-                return WriteJson(1, BridgeResult.Error("Missing --product-id."));
-            }
-
             var context = StoreContext.GetDefault();
 
-            // Desktop apps must attach Store UI to the owner HWND before calling
-            // RequestPurchaseAsync. Electron passes the hidden main window handle.
+            // Desktop apps attach StoreContext to the owner HWND before querying
+            // the base-app licence. Electron passes the hidden main window handle.
             if (options.Hwnd != IntPtr.Zero)
             {
                 InitializeWithWindow.Initialize(context, options.Hwnd);
             }
 
-            var alreadyLicensed = await HasActiveLicenseAsync(context, options.ProductId);
-            if (alreadyLicensed)
-            {
-                return WriteJson(0, BridgeResult.Active("Already purchased."));
-            }
-
-            if (!options.PurchaseIfNeeded)
-            {
-                return WriteJson(0, BridgeResult.Inactive("Not purchased."));
-            }
-
-            var purchase = await context.RequestPurchaseAsync(options.ProductId);
-            if (purchase.Status is StorePurchaseStatus.Succeeded or StorePurchaseStatus.AlreadyPurchased)
-            {
-                var licensedAfterPurchase = await HasActiveLicenseAsync(context, options.ProductId);
-                return WriteJson(
-                    0,
-                    licensedAfterPurchase
-                        ? BridgeResult.Active("Purchase completed.")
-                        : BridgeResult.Inactive("Purchase completed, but the license is not active yet.")
-                );
-            }
-
+            var license = await context.GetAppLicenseAsync();
             return WriteJson(
                 0,
-                BridgeResult.Inactive(
-                    $"Purchase status: {purchase.Status}. Extended error: {purchase.ExtendedError?.Message ?? "none"}"
-                )
+                license.IsActive
+                    ? BridgeResult.Active("Microsoft Store app license is active.")
+                    : BridgeResult.Inactive("Microsoft Store app license is inactive.")
             );
         }
         catch (Exception error)
         {
             return WriteJson(1, BridgeResult.Error(error.Message));
         }
-    }
-
-    private static async Task<bool> HasActiveLicenseAsync(StoreContext context, string productId)
-    {
-        var license = await context.GetAppLicenseAsync();
-
-        if (license.IsActive)
-        {
-            return true;
-        }
-
-        if (string.IsNullOrWhiteSpace(productId))
-        {
-            return false;
-        }
-
-        // ProductId can point to the app's Store ID or a durable add-on/IAP.
-        // Prefer the app license first, then fall back to add-on entitlement checks.
-        return license.AddOnLicenses.TryGetValue(productId, out var addOnLicense)
-            && addOnLicense.IsActive;
     }
 
     private static int WriteJson(int exitCode, BridgeResult result)
@@ -94,33 +47,25 @@ internal static class Program
     };
 }
 
-internal sealed record BridgeOptions(string ProductId, IntPtr Hwnd, bool PurchaseIfNeeded)
+internal sealed record BridgeOptions(IntPtr Hwnd)
 {
     public static BridgeOptions Parse(string[] args)
     {
-        string productId = "";
         IntPtr hwnd = IntPtr.Zero;
-        var purchaseIfNeeded = false;
 
         for (var i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
-                case "--product-id" when i + 1 < args.Length:
-                    productId = args[++i];
-                    break;
                 case "--hwnd" when i + 1 < args.Length:
                     hwnd = ulong.TryParse(args[++i], out var parsedHwnd)
                         ? new IntPtr(unchecked((long)parsedHwnd))
                         : IntPtr.Zero;
                     break;
-                case "--purchase-if-needed":
-                    purchaseIfNeeded = true;
-                    break;
             }
         }
 
-        return new BridgeOptions(productId, hwnd, purchaseIfNeeded);
+        return new BridgeOptions(hwnd);
     }
 }
 

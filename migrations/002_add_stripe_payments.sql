@@ -1,4 +1,6 @@
--- Add Stripe payment support to transactions
+-- Legacy compatibility migration. These nullable columns are retained only so
+-- databases created by older releases remain readable; Store runtime payment
+-- and Stripe integration have been removed.
 
 ALTER TABLE IF EXISTS transactions
   ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'completed';

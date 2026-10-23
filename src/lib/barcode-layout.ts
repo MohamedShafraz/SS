@@ -77,7 +77,7 @@ function normalizeFieldAlignments(value: unknown) {
 export const BUILT_IN_BARCODE_PRESETS: BarcodeStickerPreset[] = [
   {
     id: "builtin-ga-2408t-102mm-3up-25mm",
-    name: "default2",
+    name: "GA-2408T 3-up (Vertical roll feed)",
     builtIn: true,
     stickerWidthMm: 31.33,
     stickerHeightMm: 25,

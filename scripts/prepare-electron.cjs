@@ -8,8 +8,6 @@ const staticSource = path.join(root, ".next", "static");
 const staticTarget = path.join(standaloneNext, "static");
 const publicSource = path.join(root, "public");
 const publicTarget = path.join(standalone, "public");
-const initialDb = path.join(root, "client-build", "data", "pos-local-db.sqlite");
-const licenseConfig = path.join(root, "client-build", "license-config.json");
 
 function copyDir(source, target) {
   if (!fs.existsSync(source)) return;
@@ -22,18 +20,21 @@ if (!fs.existsSync(path.join(standalone, "server.js"))) {
   throw new Error("Missing .next/standalone/server.js. Run npm.cmd run build first.");
 }
 
-if (!fs.existsSync(initialDb)) {
-  throw new Error(
-    "Missing client-build/data/pos-local-db.sqlite. Run npm.cmd run register-client -- --company=\"Client Name\" --fresh first."
-  );
-}
-
-if (!fs.existsSync(licenseConfig)) {
-  fs.mkdirSync(path.dirname(licenseConfig), { recursive: true });
-  fs.writeFileSync(licenseConfig, JSON.stringify({}, null, 2));
-}
-
 copyDir(staticSource, staticTarget);
 copyDir(publicSource, publicTarget);
+
+// Next standalone tracing can copy the development data directory into the
+// deployable server folder. The packaged app must always create/open its
+// database in Electron's per-user data directory instead.
+const bundledDataDirectory = path.join(standalone, "data");
+if (fs.existsSync(bundledDataDirectory)) {
+  fs.rmSync(bundledDataDirectory, { recursive: true, force: true });
+}
+
+for (const filename of fs.readdirSync(standalone)) {
+  if (filename === ".env" || filename.startsWith(".env.")) {
+    fs.rmSync(path.join(standalone, filename), { force: true });
+  }
+}
 
 console.log("Electron assets prepared");

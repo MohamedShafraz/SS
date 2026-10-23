@@ -10,7 +10,7 @@ interface AuthContextType {
   token: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   isAuthenticated: boolean;
   isDemoMode: boolean;
   setDemoMode: (isDemo: boolean) => void;
@@ -27,24 +27,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isDemoMode, setDemoMode] = useState(false);
   const router = useRouter();
 
-  // Check for existing user on mount
   useEffect(() => {
-    const storedUser = localStorage.getItem("auth_user");
-
-    if (storedUser) {
-      try {
-        const parsedUser: unknown = JSON.parse(storedUser);
-        if (!isAuthUser(parsedUser)) {
-          throw new Error("Stored user has an invalid shape");
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then(async (response) => {
+        const data: unknown = await response.json();
+        const sessionUser = data && typeof data === "object" ? (data as { user?: unknown }).user : null;
+        if (response.ok && isAuthUser(sessionUser)) {
+          setUser(sessionUser);
+          setToken("authenticated");
         }
-        setUser(parsedUser);
-        setToken("authenticated"); // Cookie handles actual token
-      } catch (error) {
-        console.error("Error parsing stored user:", error);
-        localStorage.removeItem("auth_user");
-      }
-    }
-    setLoading(false);
+      })
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
   }, []);
 
   const login = async (email: string, password: string) => {
@@ -68,7 +62,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       setToken(data.token);
       setUser(data.user);
-      localStorage.setItem("auth_user", JSON.stringify(data.user));
     } catch (error) {
       console.error("Login error:", error);
       throw error;
@@ -77,15 +70,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
     setUser(null);
     setToken(null);
-    localStorage.removeItem("auth_user");
-    
-    // Clear auth cookie
-    document.cookie = "auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC;";
-    
     router.push("/login");
+    }
   };
 
   return (

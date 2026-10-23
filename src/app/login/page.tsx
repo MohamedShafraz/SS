@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { ArrowLeft, Loader2, LockKeyhole, LogIn, ShoppingCart } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "@/lib/auth-context";
@@ -129,6 +130,9 @@ export default function LoginPage() {
                 {loading || authLoading ? "Signing in" : "Sign in"}
               </button>
             </form>
+            <p className="mt-4 text-center text-xs text-slate-500">
+              <Link href="/privacy" className="underline">Privacy policy</Link> &middot; mshpos@proton.me
+            </p>
 
             <div className="mt-5 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
               <div className="flex items-center gap-2 text-slate-600">
@@ -139,7 +143,7 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <p className="text-xs text-slate-500">© MSHPOS</p>
+          <p className="text-xs text-slate-500">&copy; MSHPOS</p>
         </section>
 
         <section className="relative hidden min-h-screen overflow-hidden bg-slate-950 lg:block">

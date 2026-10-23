@@ -3,11 +3,14 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { readDb, updateRows } from "@/lib/local-store";
 import type { AuthRole, UserRow } from "@/types";
+import {
+  AUTH_COOKIE_NAME,
+  SESSION_TTL_SECONDS,
+  getJwtSecret,
+  requireSameOrigin,
+} from "@/lib/server-auth";
 
-const AUTH_COOKIE_NAME = "auth_token";
-const SESSION_TTL_SECONDS = 60 * 60 * 24;
 const AUTH_ERROR_MESSAGE = "Invalid email or password";
-const LOCAL_JWT_FALLBACK = "offline-pos-local-session-secret-change-before-client-build";
 
 type LoginRequestBody = {
   email?: unknown;
@@ -19,10 +22,6 @@ type ParsedLoginRequest =
 
 function json(message: string, status: number) {
   return NextResponse.json({ message }, { status });
-}
-
-function getJwtSecret() {
-  return process.env.JWT_SECRET?.trim() || LOCAL_JWT_FALLBACK;
 }
 
 function normalizeRole(role: UserRow["role"]): AuthRole | null {
@@ -57,6 +56,7 @@ async function parseLoginRequest(request: NextRequest): Promise<ParsedLoginReque
 
 export async function POST(request: NextRequest) {
   try {
+    requireSameOrigin(request);
     const parsed = await parseLoginRequest(request);
     if ("error" in parsed) return json(parsed.error, 400);
 
@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
       { column: "id", op: "eq", value: user.id },
     ]);
 
-    const token = jwt.sign({ id: user.id, email: user.email, role }, getJwtSecret(), {
+    const token = jwt.sign({ id: user.id, sub: user.id, email: user.email, role }, getJwtSecret(), {
       algorithm: "HS256",
       expiresIn: SESSION_TTL_SECONDS,
     });
@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
     response.cookies.set(AUTH_COOKIE_NAME, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: "strict",
       maxAge: SESSION_TTL_SECONDS,
       path: "/",
     });
@@ -109,6 +109,6 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (error) {
     console.error("Unexpected login error", error);
-    return json("Internal server error", 500);
+    return json(error instanceof Error && error.message === "Invalid request origin" ? error.message : "Internal server error", error instanceof Error && error.message === "Invalid request origin" ? 403 : 500);
   }
 }

@@ -10,7 +10,7 @@ import {
   deleteProductVariant,
   updateProductVariant,
   updateVariantStock,
-} from "@/lib/supabase";
+} from "@/lib/local-db-client";
 
 interface VariantManagerProps {
   productId: string;

@@ -25,7 +25,7 @@ import {
   CreditCard,
   ReceiptText,
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { localDb } from "@/lib/local-db-client";
 import { AuthContext } from "@/lib/auth-context";
 import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
 import type { BusinessProfile, ProductVariant } from "@/types";
@@ -119,7 +119,7 @@ export default function Dashboard() {
         // If not authenticated, fetch real data filtered for user_id = NULL
         if (!authContext?.isAuthenticated) {
           // Fetch all products
-          const { data: productsData, error: productsError } = await supabase
+          const { data: productsData, error: productsError } = await localDb
             .from("products")
             .select("*")
             .is("user_id", null);
@@ -130,7 +130,7 @@ export default function Dashboard() {
             }
           }
 
-          const { data: companiesData, error: companiesError } = await supabase
+          const { data: companiesData, error: companiesError } = await localDb
             .from("companies")
             .select("*")
             .is("user_id", null)
@@ -140,7 +140,7 @@ export default function Dashboard() {
             setCompanies(companiesData || []);
           }
 
-          const { data: variantsData, error: variantsError } = await supabase
+          const { data: variantsData, error: variantsError } = await localDb
             .from("product_variants")
             .select("*");
 
@@ -149,7 +149,7 @@ export default function Dashboard() {
           }
 
           // Fetch transactions where user_id is NULL
-          const { data: transactionsData, error: transactionsError } = await supabase
+          const { data: transactionsData, error: transactionsError } = await localDb
             .from("transactions")
             .select("*")
             .or("status.is.null,status.eq.completed")
@@ -163,7 +163,7 @@ export default function Dashboard() {
           }
 
           // Fetch transaction items
-          const { data: itemsData, error: itemsError } = await supabase
+          const { data: itemsData, error: itemsError } = await localDb
             .from("transaction_items")
             .select("*")
             .is("user_id", null);
@@ -174,14 +174,14 @@ export default function Dashboard() {
             }
           }
 
-          const { data: expensesData, error: expensesError } = await supabase
+          const { data: expensesData, error: expensesError } = await localDb
             .from("expenses")
             .select("*");
 
           if (!expensesError && active) {
             setExpenses(expensesData || []);
           }
-          const { data: shopPaymentsData, error: shopPaymentsError } = await supabase
+          const { data: shopPaymentsData, error: shopPaymentsError } = await localDb
             .from("shop_payments")
             .select("*");
 
@@ -192,7 +192,7 @@ export default function Dashboard() {
         }
 
         // Fetch all products
-        const { data: productsData, error: productsError } = await supabase
+        const { data: productsData, error: productsError } = await localDb
           .from("products")
           .select("*");
 
@@ -202,7 +202,7 @@ export default function Dashboard() {
           }
         }
 
-        const { data: companiesData, error: companiesError } = await supabase
+        const { data: companiesData, error: companiesError } = await localDb
           .from("companies")
           .select("*")
           .order("name", { ascending: true });
@@ -211,7 +211,7 @@ export default function Dashboard() {
           setCompanies(companiesData || []);
         }
 
-        const { data: variantsData, error: variantsError } = await supabase
+        const { data: variantsData, error: variantsError } = await localDb
           .from("product_variants")
           .select("*");
 
@@ -220,7 +220,7 @@ export default function Dashboard() {
         }
 
         // Fetch all transactions (for authenticated users)
-        const { data: transactionsData, error: transactionsError } = await supabase
+        const { data: transactionsData, error: transactionsError } = await localDb
           .from("transactions")
           .select("*")
           .or("status.is.null,status.eq.completed")
@@ -233,7 +233,7 @@ export default function Dashboard() {
         }
 
         // Fetch transaction items to get category data
-        const { data: itemsData, error: itemsError } = await supabase
+        const { data: itemsData, error: itemsError } = await localDb
           .from("transaction_items")
           .select("*");
 
@@ -243,7 +243,7 @@ export default function Dashboard() {
           }
         }
 
-        const { data: expensesData, error: expensesError } = await supabase
+        const { data: expensesData, error: expensesError } = await localDb
           .from("expenses")
           .select("*");
 
@@ -251,7 +251,7 @@ export default function Dashboard() {
           setExpenses(expensesData || []);
         }
 
-        const { data: shopPaymentsData, error: shopPaymentsError } = await supabase
+        const { data: shopPaymentsData, error: shopPaymentsError } = await localDb
           .from("shop_payments")
           .select("*");
 
@@ -483,7 +483,7 @@ export default function Dashboard() {
       .sort((a, b) => b.sales - a.sales);
   };
 
-  // Sample data - will be replaced with real data from Supabase
+  // Empty fallback used until local dashboard data is available.
   const salesData = generateSalesData();
 
   const distributionData = generateDistributionData();

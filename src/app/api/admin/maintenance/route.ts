@@ -1,34 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import jwt from "jsonwebtoken";
 import {
   maintenanceDelete,
   maintenanceUpdate,
   readDb,
 } from "@/lib/local-store";
-
-const JWT_SECRET = process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 32
-  ? process.env.JWT_SECRET
-  : "offline-pos-local-session-secret-change-before-client-build";
+import { requireSameOrigin, requireSession } from "@/lib/server-auth";
 
 const TABLES = new Set([
-  "suppliers",
-  "supplier_payments",
-  "expenses",
-  "companies",
-  "shop_accounts",
-  "shop_payments",
   "returns",
-  "return_items",
-  "replacement_items",
-  "users",
 ]);
 
 function requireMaintenanceRole(request: NextRequest) {
-  const token = request.cookies.get("auth_token")?.value;
-  if (!token) throw new Error("Unauthorized");
-  const payload = jwt.verify(token, JWT_SECRET) as { role?: string; sub?: string };
-  if (payload.role !== "admin" && payload.role !== "manager") throw new Error("Forbidden");
-  return payload;
+  return requireSession(request, ["admin"]);
 }
 
 function tableName(value: unknown) {
@@ -38,7 +21,7 @@ function tableName(value: unknown) {
 
 function responseError(error: unknown) {
   const message = error instanceof Error ? error.message : "Maintenance request failed";
-  const status = message === "Unauthorized" ? 401 : message === "Forbidden" ? 403 : 400;
+  const status = message === "Unauthorized" ? 401 : message === "Forbidden" || message === "Invalid request origin" ? 403 : 400;
   return NextResponse.json({ data: null, error: { message } }, { status });
 }
 
@@ -56,7 +39,6 @@ export async function GET(request: NextRequest) {
       returns: db.returns,
       return_items: db.return_items,
       replacement_items: db.replacement_items,
-      users: db.users.map(({ password_hash, ...user }) => user),
     });
   } catch (error) {
     return responseError(error);
@@ -65,6 +47,7 @@ export async function GET(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    requireSameOrigin(request);
     requireMaintenanceRole(request);
     const body = await request.json() as { table?: unknown; id?: unknown; values?: Record<string, unknown> };
     const table = tableName(body.table);
@@ -72,6 +55,12 @@ export async function PATCH(request: NextRequest) {
     const values = { ...(body.values || {}) };
     delete values.id;
     delete values.password_hash;
+    if (table === "returns") {
+      const status = values.status;
+      if (Object.keys(values).length !== 1 || !["pending", "completed", "cancelled"].includes(String(status))) {
+        throw new Error("Only a valid return status can be changed here");
+      }
+    }
     const result = maintenanceUpdate(table, body.id, values);
     return NextResponse.json(result);
   } catch (error) {
@@ -81,11 +70,11 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const actor = requireMaintenanceRole(request);
+    requireSameOrigin(request);
+    requireMaintenanceRole(request);
     const body = await request.json() as { table?: unknown; id?: unknown };
     const table = tableName(body.table);
     if (typeof body.id !== "string" || !body.id) throw new Error("Record id is required");
-    if (table === "users" && body.id === actor.sub) throw new Error("You cannot delete your own account");
     return NextResponse.json(maintenanceDelete(table, body.id));
   } catch (error) {
     return responseError(error);

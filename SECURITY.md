@@ -1,13 +1,16 @@
 # Security
 
-This POS is being converted into an offline Windows desktop app. The security design for licensing, local secrets, backup/restore, and tamper behavior lives in:
+MSHPOS keeps operational data and staff authentication in local SQLite. The Store build uses the Microsoft Store base-app entitlement only; it has no Supabase credentials, Stripe secrets, licence keys, signing private keys, or custom activation service.
 
-- [docs/security/offline-license.md](docs/security/offline-license.md)
+Security rules:
 
-Security-sensitive implementation rules:
+- Generate the session-signing secret per Electron installation and fail closed if it cannot be initialized.
+- Require validated server sessions and role checks for protected pages and APIs.
+- Validate loopback origin and mutation requests; validate privileged IPC sender URLs and payload sizes.
+- Keep checkout, return, stock, setup, and restore workflows transactional.
+- Stage and integrity-check backups before replacement, and create a recovery copy.
+- Preserve existing user-data databases during upgrades and use additive migrations.
+- Exclude environment files, databases, keys, certificates, test credentials, and customer data from packages.
+- Never publish a default account or password.
 
-- Do not ship Supabase service keys, Stripe secrets, license private keys, or activation-admin credentials in the desktop app.
-- Use signed license payloads verified with an embedded public key.
-- Generate local runtime secrets per install; do not use fallback JWT secrets.
-- Fail closed to activation UI when license verification fails.
-- Keep business data intact on tamper detection so support can recover the client safely.
+Report security issues privately to mshpos@proton.me.

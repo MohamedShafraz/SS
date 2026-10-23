@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, UserPlus } from "lucide-react";
 import toast from "react-hot-toast";
+import { CURRENCY_OPTIONS } from "@/lib/currency";
 
 type SetupStatus = {
   usersCount: number;
@@ -14,7 +15,8 @@ export default function ActivatePage() {
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [admin, setAdmin] = useState({ name: "", email: "", password: "" });
+  const [business, setBusiness] = useState({ name: "", address: "", phone: "", email: "", currency: "LKR" });
+  const [admin, setAdmin] = useState({ name: "", email: "", password: "", confirmPassword: "" });
 
   const refreshStatus = async () => {
     const response = await fetch("/api/setup/status", { cache: "no-store" });
@@ -37,12 +39,23 @@ export default function ActivatePage() {
   }, [router, status]);
 
   const createAdmin = async () => {
+    if (!business.name.trim()) {
+      toast.error("Enter your business name");
+      return;
+    }
+    if (admin.password !== admin.confirmPassword) {
+      toast.error("Passwords do not match");
+      return;
+    }
     setBusy(true);
     try {
       const response = await fetch("/api/setup/first-admin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(admin),
+        body: JSON.stringify({
+          business,
+          admin: { name: admin.name, email: admin.email, password: admin.password },
+        }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "Could not create admin");
@@ -72,15 +85,26 @@ export default function ActivatePage() {
             <UserPlus className="h-5 w-5" />
           </span>
           <div>
-            <p className="text-sm font-semibold text-slate-500">MSHPOS Offline</p>
-            <h1 className="text-2xl font-bold">Create first admin</h1>
+            <p className="text-sm font-semibold text-slate-500">MSHPOS first-time setup</p>
+            <h1 className="text-2xl font-bold">Set up your business</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Activation is disabled for now. Create the local admin account to start using the POS.
+              Your details and staff accounts stay on this computer.
             </p>
           </div>
         </div>
 
         <div className="space-y-4">
+          <h2 className="font-semibold">1. Business details</h2>
+          <input value={business.name} onChange={(event) => setBusiness((prev) => ({ ...prev, name: event.target.value }))} className="input-base" placeholder="Business name *" />
+          <input value={business.address} onChange={(event) => setBusiness((prev) => ({ ...prev, address: event.target.value }))} className="input-base" placeholder="Address" />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <input value={business.phone} onChange={(event) => setBusiness((prev) => ({ ...prev, phone: event.target.value }))} className="input-base" placeholder="Telephone" />
+            <input type="email" value={business.email} onChange={(event) => setBusiness((prev) => ({ ...prev, email: event.target.value }))} className="input-base" placeholder="Business email" />
+          </div>
+          <select value={business.currency} onChange={(event) => setBusiness((prev) => ({ ...prev, currency: event.target.value }))} className="input-base">
+            {CURRENCY_OPTIONS.map((currency) => <option key={currency.code} value={currency.code}>{currency.label}</option>)}
+          </select>
+          <h2 className="pt-2 font-semibold">2. Administrator account</h2>
           <input
             value={admin.name}
             onChange={(event) => setAdmin((prev) => ({ ...prev, name: event.target.value }))}
@@ -100,6 +124,14 @@ export default function ActivatePage() {
             className="input-base"
             placeholder="Admin password"
           />
+          <input
+            type="password"
+            value={admin.confirmPassword}
+            onChange={(event) => setAdmin((prev) => ({ ...prev, confirmPassword: event.target.value }))}
+            className="input-base"
+            placeholder="Confirm admin password"
+          />
+          <p className="text-xs text-slate-500">Use at least 10 characters with upper-case, lower-case, and a number.</p>
           <button
             onClick={createAdmin}
             disabled={busy}

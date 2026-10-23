@@ -1,7 +1,7 @@
 "use client";
 
 import { MainLayout } from "@/components/layout";
-import { supabase } from "@/lib/supabase";
+import { localDb } from "@/lib/local-db-client";
 import { Building2, Edit3, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
@@ -25,7 +25,7 @@ export default function CompaniesPage() {
 
   const fetchCompanies = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    const { data, error } = await localDb
       .from("companies")
       .select("*")
       .order("name", { ascending: true });
@@ -47,8 +47,8 @@ export default function CompaniesPage() {
       return;
     }
     const query = editingId
-      ? supabase.from("companies").maintenance().update({ name: name.trim(), notes }).eq("id", editingId)
-      : supabase.from("companies").insert([{ name: name.trim(), notes }]);
+      ? localDb.from("companies").maintenance().update({ name: name.trim(), notes }).eq("id", editingId)
+      : localDb.from("companies").insert([{ name: name.trim(), notes }]);
     const { error } = await query;
     if (error) {
       toast.error("Failed to save company");
@@ -63,7 +63,7 @@ export default function CompaniesPage() {
 
   const deleteCompany = async (id: string) => {
     if (!window.confirm("Delete this company? Products linked to it must be reassigned first.")) return;
-    const { error } = await supabase.from("companies").maintenance().delete().eq("id", id);
+    const { error } = await localDb.from("companies").maintenance().delete().eq("id", id);
     if (error) toast.error(error.message || "Failed to delete company");
     else { toast.success("Company deleted"); fetchCompanies(); }
   };

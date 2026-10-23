@@ -2,12 +2,28 @@ const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { execFileSync, fork, spawn } = require("child_process");
 const path = require("path");
 const net = require("net");
+const http = require("http");
+const crypto = require("crypto");
 const fs = require("fs");
+const { DatabaseSync } = require("node:sqlite");
 
 let serverProcess = null;
 let mainWindow = null;
+let localOrigin = null;
 
-ipcMain.handle("hardware:list-printers", async () => {
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) app.quit();
+
+function isTrustedIpc(event) {
+  return Boolean(localOrigin && event.senderFrame?.url?.startsWith(`${localOrigin}/`));
+}
+
+function requireTrustedIpc(event) {
+  if (!isTrustedIpc(event)) throw new Error("Untrusted IPC sender");
+}
+
+ipcMain.handle("hardware:list-printers", async (event) => {
+  requireTrustedIpc(event);
   if (!mainWindow || mainWindow.isDestroyed()) return [];
   const printers = await mainWindow.webContents.getPrintersAsync();
   return printers.map((printer) => ({
@@ -94,11 +110,13 @@ function detectPdfViewers() {
   }));
 }
 
-ipcMain.handle("hardware:list-pdf-viewers", async () =>
-  detectPdfViewers().map(({ executablePath: _executablePath, ...viewer }) => viewer)
-);
+ipcMain.handle("hardware:list-pdf-viewers", async (event) => {
+  requireTrustedIpc(event);
+  return detectPdfViewers().map(({ executablePath: _executablePath, ...viewer }) => viewer);
+});
 
-ipcMain.handle("hardware:open-pdf-repair-settings", async () => {
+ipcMain.handle("hardware:open-pdf-repair-settings", async (event) => {
+  requireTrustedIpc(event);
   try {
     await shell.openExternal("ms-settings:defaultapps");
     return { success: true };
@@ -107,7 +125,8 @@ ipcMain.handle("hardware:open-pdf-repair-settings", async () => {
   }
 });
 
-ipcMain.handle("hardware:select-backup-folder", async () => {
+ipcMain.handle("hardware:select-backup-folder", async (event) => {
+  requireTrustedIpc(event);
   if (!mainWindow || mainWindow.isDestroyed()) {
     return { canceled: true, error: "Window is unavailable" };
   }
@@ -124,7 +143,9 @@ ipcMain.handle("hardware:select-backup-folder", async () => {
   return { canceled: false, path: result.filePaths[0] };
 });
 
-ipcMain.handle("hardware:print-barcode", async (_event, { html, printerName, options = {} }) => {
+ipcMain.handle("hardware:print-barcode", async (event, { html, printerName, options = {} }) => {
+  requireTrustedIpc(event);
+  if (typeof html === "string" && Buffer.byteLength(html, "utf8") > 2 * 1024 * 1024) return { success: false, error: "Print content is too large" };
   if (!mainWindow || mainWindow.isDestroyed() || typeof html !== "string" || !html.trim()) {
     return { success: false, error: "Printing is unavailable" };
   }
@@ -272,7 +293,9 @@ async function openBarcodePdfWithViewers(pdfBase64, viewerIds) {
   };
 }
 
-ipcMain.handle("hardware:preview-barcode-pdf", async (_event, { pdfBase64, viewerIds }) => {
+ipcMain.handle("hardware:preview-barcode-pdf", async (event, { pdfBase64, viewerIds }) => {
+  requireTrustedIpc(event);
+  if (typeof pdfBase64 === "string" && pdfBase64.length > 20 * 1024 * 1024) return { success: false, error: "PDF is too large" };
   if (typeof pdfBase64 !== "string" || !pdfBase64.trim()) {
     return { success: false, error: "PDF preview is unavailable" };
   }
@@ -285,7 +308,9 @@ ipcMain.handle("hardware:preview-barcode-pdf", async (_event, { pdfBase64, viewe
   }
 });
 
-ipcMain.handle("hardware:preview-barcode-html", async (_event, { html, options = {}, viewerIds }) => {
+ipcMain.handle("hardware:preview-barcode-html", async (event, { html, options = {}, viewerIds }) => {
+  requireTrustedIpc(event);
+  if (typeof html === "string" && Buffer.byteLength(html, "utf8") > 2 * 1024 * 1024) return { success: false, error: "Preview content is too large" };
   if (typeof html !== "string" || !html.trim()) {
     return { success: false, error: "Barcode preview is unavailable" };
   }
@@ -325,7 +350,9 @@ ipcMain.handle("hardware:preview-barcode-html", async (_event, { html, options =
   }
 });
 
-ipcMain.handle("hardware:print-barcode-pdf", async (_event, { pdfBase64, printerName }) => {
+ipcMain.handle("hardware:print-barcode-pdf", async (event, { pdfBase64, printerName }) => {
+  requireTrustedIpc(event);
+  if (typeof pdfBase64 === "string" && pdfBase64.length > 20 * 1024 * 1024) return { success: false, error: "PDF is too large" };
   if (!mainWindow || mainWindow.isDestroyed() || typeof pdfBase64 !== "string" || !pdfBase64.trim()) {
     return { success: false, error: "PDF printing is unavailable" };
   }
@@ -404,30 +431,50 @@ function serverPath() {
   return path.join(process.resourcesPath, "app.asar.unpacked", ".next", "standalone", "server.js");
 }
 
-function copyInitialDatabaseIfNeeded() {
-  if (!app.isPackaged) return;
-
-  const userDataDb = path.join(app.getPath("userData"), "pos-local-db.sqlite");
-  const initialDb = path.join(process.resourcesPath, "initial-data", "pos-local-db.sqlite");
-
-  if (fs.existsSync(userDataDb) || !fs.existsSync(initialDb)) return;
-
-  fs.mkdirSync(path.dirname(userDataDb), { recursive: true });
-  fs.copyFileSync(initialDb, userDataDb);
+function jwtSecretPath() {
+  return path.join(app.getPath("userData"), ".session-secret");
 }
 
-function readLicenseConfig() {
-  const configPath = app.isPackaged
-    ? path.join(process.resourcesPath, "license-config.json")
-    : path.join(process.cwd(), "client-build", "license-config.json");
-
-  if (!fs.existsSync(configPath)) return {};
-
-  try {
-    return JSON.parse(fs.readFileSync(configPath, "utf8"));
-  } catch {
-    return {};
+function getOrCreateJwtSecret() {
+  const filePath = jwtSecretPath();
+  if (fs.existsSync(filePath)) {
+    const existing = fs.readFileSync(filePath, "utf8").trim();
+    if (existing.length >= 32) return existing;
   }
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const secret = crypto.randomBytes(48).toString("base64url");
+  const temporaryPath = `${filePath}.new`;
+  fs.writeFileSync(temporaryPath, secret, { encoding: "utf8", mode: 0o600 });
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  fs.renameSync(temporaryPath, filePath);
+  return secret;
+}
+
+function createPreMigrationBackup() {
+  const userData = app.getPath("userData");
+  const databasePath = path.join(userData, "pos-local-db.sqlite");
+  if (!fs.existsSync(databasePath)) return;
+
+  const backupDirectory = path.join(userData, "backups");
+  const backupPath = path.join(backupDirectory, `pre-upgrade-${app.getVersion()}.sqlite`);
+  if (fs.existsSync(backupPath)) return;
+  fs.mkdirSync(backupDirectory, { recursive: true });
+
+  // The application database uses WAL mode. Checkpoint it while the local
+  // server is still stopped so the backup contains every committed record,
+  // including records that may otherwise remain in the -wal sidecar.
+  const database = new DatabaseSync(databasePath);
+  try {
+    const integrity = database.prepare("PRAGMA quick_check").get();
+    if (!integrity || Object.values(integrity)[0] !== "ok") {
+      throw new Error("The existing database did not pass its integrity check");
+    }
+    database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } finally {
+    database.close();
+  }
+
+  fs.copyFileSync(databasePath, backupPath, fs.constants.COPYFILE_EXCL);
 }
 
 function agreementPath() {
@@ -482,19 +529,6 @@ async function requireUsageAgreement(parentWindow) {
 
   saveUsageAgreementAcceptance();
   return true;
-}
-
-function getMicrosoftStoreProductId() {
-  const licenseConfig = readLicenseConfig();
-
-  // Put your Microsoft Store app or add-on Product ID in one of these places:
-  // 1. MICROSOFT_STORE_PRODUCT_ID at build/runtime, or
-  // 2. client-build/license-config.json as { "microsoftStoreProductId": "YOUR_STORE_ID" }.
-  return (
-    process.env.MICROSOFT_STORE_PRODUCT_ID ||
-    licenseConfig.microsoftStoreProductId ||
-    ""
-  ).trim();
 }
 
 function storeBridgePath() {
@@ -559,26 +593,12 @@ function runStoreBridge(args) {
 }
 
 async function ensureMicrosoftStoreLicense(parentWindow) {
-  if (process.platform !== "win32") return true;
-
-  const productId = getMicrosoftStoreProductId();
-  if (!productId) {
-    if (!app.isPackaged) return true;
-
-    await dialog.showMessageBox(parentWindow, {
-      type: "error",
-      title: "Microsoft Store product is not configured",
-      message: "Microsoft Store product is not configured.",
-      detail:
-        "Set MICROSOFT_STORE_PRODUCT_ID or add microsoftStoreProductId to client-build/license-config.json before building the Store package.",
-    });
-    return false;
-  }
+  // Store entitlement is meaningful only inside an MSIX/AppX package identity.
+  // Existing NSIS installations remain usable and keep their local database.
+  if (process.platform !== "win32" || !app.isPackaged || !process.windowsStore) return true;
 
   const bridgePath = storeBridgePath();
   if (!fs.existsSync(bridgePath)) {
-    if (!app.isPackaged) return true;
-
     await dialog.showMessageBox(parentWindow, {
       type: "error",
       title: "Microsoft Store purchase component is missing",
@@ -588,40 +608,57 @@ async function ensureMicrosoftStoreLicense(parentWindow) {
     return false;
   }
 
-  try {
-    const result = await runStoreBridge([
-      "--product-id",
-      productId,
-      "--hwnd",
-      getWindowHandle(parentWindow),
-      "--purchase-if-needed",
-    ]);
-
-    if (result.licensed === true) return true;
-
-    await dialog.showMessageBox(parentWindow, {
-      type: "warning",
-      title: "Purchase required",
-      message: "A Microsoft Store license is required to use MSHPOS.",
-      detail: result.message || "The purchase was not completed.",
-    });
-    return false;
-  } catch (error) {
-    await dialog.showMessageBox(parentWindow, {
-      type: "error",
-      title: "Microsoft Store purchase failed",
-      message: "Microsoft Store purchase failed.",
-      detail: error.message,
-    });
-    return false;
+  while (true) {
+    try {
+      const result = await runStoreBridge(["--hwnd", getWindowHandle(parentWindow)]);
+      if (result.licensed === true) return true;
+      await dialog.showMessageBox(parentWindow, {
+        type: "warning",
+        title: "Microsoft Store license required",
+        message: "Install or purchase MSHPOS from Microsoft Store to continue.",
+        detail: result.message || "The app license is inactive.",
+      });
+      return false;
+    } catch (error) {
+      const choice = await dialog.showMessageBox(parentWindow, {
+        type: "error",
+        title: "Could not verify Microsoft Store license",
+        message: "MSHPOS could not verify the Microsoft Store license.",
+        detail: error.message,
+        buttons: ["Retry", "Exit"],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (choice.response !== 0) return false;
+    }
   }
+}
+
+function waitForServer(url, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      const request = http.get(url, (response) => {
+        response.resume();
+        if ((response.statusCode || 500) < 500) return resolve();
+        if (Date.now() >= deadline) return reject(new Error("The local server did not become ready"));
+        setTimeout(attempt, 200);
+      });
+      request.on("error", () => {
+        if (Date.now() >= deadline) reject(new Error("The local server did not become ready"));
+        else setTimeout(attempt, 200);
+      });
+      request.setTimeout(1000, () => request.destroy());
+    };
+    attempt();
+  });
 }
 
 async function startServer() {
   const port = await findFreePort();
   const userData = app.getPath("userData");
-  const licenseConfig = readLicenseConfig();
-  copyInitialDatabaseIfNeeded();
+  createPreMigrationBackup();
+  const jwtSecret = getOrCreateJwtSecret();
 
   serverProcess = fork(serverPath(), [], {
     cwd: path.dirname(serverPath()),
@@ -630,11 +667,7 @@ async function startServer() {
       PORT: String(port),
       HOSTNAME: "127.0.0.1",
       POS_LOCAL_DB_PATH: path.join(userData, "pos-local-db.sqlite"),
-      ACTIVATION_SERVER_URL:
-        process.env.ACTIVATION_SERVER_URL || licenseConfig.activationServerUrl || "",
-      LICENSE_PUBLIC_KEY_PEM:
-        process.env.LICENSE_PUBLIC_KEY_PEM || licenseConfig.licensePublicKeyPem || "",
-      JWT_SECRET: process.env.JWT_SECRET || "offline-pos-local-session-secret-change-before-client-build",
+      JWT_SECRET: jwtSecret,
       NODE_ENV: "production",
       ELECTRON_RUN_AS_NODE: "1",
     },
@@ -646,7 +679,9 @@ async function startServer() {
     dialog.showErrorBox("MSHPOS failed to start", error.message);
   });
 
-  return `http://127.0.0.1:${port}`;
+  const url = `http://127.0.0.1:${port}`;
+  await waitForServer(url);
+  return url;
 }
 
 async function createWindow() {
@@ -661,6 +696,7 @@ async function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       preload: path.join(__dirname, "preload.cjs"),
     },
   });
@@ -678,11 +714,37 @@ async function createWindow() {
   }
 
   const url = await startServer();
+  localOrigin = new URL(url).origin;
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event, navigationUrl) => {
+    try {
+      if (new URL(navigationUrl).origin !== localOrigin) event.preventDefault();
+    } catch {
+      event.preventDefault();
+    }
+  });
   await mainWindow.loadURL(url);
   mainWindow.show();
 }
 
-app.whenReady().then(createWindow);
+function handleStartupFailure(error) {
+  if (serverProcess) {
+    serverProcess.kill();
+    serverProcess = null;
+  }
+  const message = error instanceof Error ? error.message : String(error || "Unknown startup error");
+  dialog.showErrorBox("MSHPOS failed to start", message);
+  app.quit();
+}
+
+if (hasSingleInstanceLock) {
+  app.on("second-instance", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  });
+  app.whenReady().then(createWindow).catch(handleStartupFailure);
+}
 
 app.on("window-all-closed", () => {
   if (serverProcess) {
@@ -697,6 +759,6 @@ app.on("window-all-closed", () => {
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    createWindow().catch(handleStartupFailure);
   }
 });

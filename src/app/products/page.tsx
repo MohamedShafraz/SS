@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "re
 import { Plus, Edit, Trash2, Barcode } from "lucide-react";
 import JsBarcode from "jsbarcode";
 import toast from "react-hot-toast";
-import { supabase, getProductVariants } from "@/lib/supabase";
+import { localDb, getProductVariants } from "@/lib/local-db-client";
 import { OfflineProductImage } from "@/components/OfflineProductImage";
 import { VariantManager } from "@/components/VariantManager";
 import { BarcodePdfViewerId, BarcodeStickerFieldId, BusinessProfile, IndustryMode, ProductVariant } from "@/types";
@@ -286,7 +286,7 @@ export default function ProductsPage() {
       if (isActive()) {
         setLoading(true);
       }
-      const { data, error } = await supabase
+      const { data, error } = await localDb
         .from("products")
         .select("*")
         .order("created_at", { ascending: false });
@@ -325,7 +325,7 @@ export default function ProductsPage() {
     }
   }, []);
 
-  // Fetch products from Supabase
+  // Fetch products from the local SQLite API.
   useEffect(() => {
     let active = true;
 
@@ -338,7 +338,7 @@ export default function ProductsPage() {
 
   const refreshKnownVariantBarcodes = useCallback(async () => {
     try {
-      const { data } = await supabase.from("product_variants").select("*");
+      const { data } = await localDb.from("product_variants").select("*");
       setKnownVariantBarcodes(
         ((data as ProductVariant[]) || [])
           .map((variant) => variant.barcode)
@@ -356,7 +356,7 @@ export default function ProductsPage() {
   useEffect(() => {
     let active = true;
 
-    supabase
+    localDb
       .from("companies")
       .select("*")
       .order("name", { ascending: true })
@@ -440,7 +440,7 @@ export default function ProductsPage() {
 
       if (editingId) {
         // Update existing product
-        const { error } = await supabase
+        const { error } = await localDb
           .from("products")
           .update({
             name: formData.name,
@@ -466,7 +466,7 @@ export default function ProductsPage() {
         toast.success("Product updated!");
       } else {
         // Insert new product
-        const { error } = await supabase.from("products").insert([
+        const { error } = await localDb.from("products").insert([
           {
             name: formData.name,
             category: formData.category,
@@ -501,7 +501,7 @@ export default function ProductsPage() {
     if (!confirm("Are you sure you want to delete this product?")) return;
 
     try {
-      const { error } = await supabase.from("products").delete().eq("id", id);
+      const { error } = await localDb.from("products").delete().eq("id", id);
 
       if (error) {
         console.error("Error deleting product:", error);
@@ -576,13 +576,15 @@ export default function ProductsPage() {
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
 
-  const makeBarcodeImage = (value: string, displayValue = activeBarcodePreset.showBarcodeText) => {
+  const makeBarcodeImage = (value: string) => {
     const canvas = document.createElement("canvas");
     JsBarcode(canvas, value, {
       format: "CODE128",
       width: activeBarcodePreset.barcodeBarWidth,
       height: activeBarcodePreset.barcodeHeightMm * 3.78,
-      displayValue,
+      // Human-readable text is rendered by the configurable barcodeText field.
+      // Keeping it out of the image prevents non-GA presets from printing it twice.
+      displayValue: false,
       margin: 0,
       fontSize: 9,
     });
@@ -626,7 +628,7 @@ export default function ProductsPage() {
     const cellsPerPage = Math.max(1, preset.columns * preset.rows);
     const leastPrice = Number(target.least_price || 0);
     const isGa2408tPreset = isGa2408tLayout();
-    const barcodeImage = makeBarcodeImage(target.barcode, isGa2408tPreset ? false : preset.showBarcodeText);
+    const barcodeImage = makeBarcodeImage(target.barcode);
     const { width: pageWidthMm, height: pageHeightMm } = getBarcodePageSizeMm();
     const businessName = escapeHtml(settings.businessName || "");
     const businessAddress = escapeHtml(settings.address || "");
