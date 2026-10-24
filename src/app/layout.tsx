@@ -20,6 +20,11 @@ export const metadata: Metadata = {
   description: "A focused offline Windows point-of-sale system for independent retailers and growing shops.",
   metadataBase: metadataBase(),
   openGraph: { title: "MSHPOS", description: "A focused point-of-sale system for independent shops.", images: ["/store-assets/mshpos-super-hero-blue.png"] },
+  icons: {
+    icon: "/store-assets/mshpos-logo-transparent.png",
+    shortcut: "/store-assets/mshpos-logo-transparent.png",
+    apple: "/store-assets/mshpos-logo-transparent.png",
+  },
   robots: { index: true, follow: true },
 };
 

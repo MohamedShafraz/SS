@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { SITE, validStoreUrl } from "@/site/config";
 import { ExternalLinkIcon } from "@/components/icons";
 
@@ -21,7 +22,14 @@ export function SiteHeader() {
     <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-900/95 text-white backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-5 px-5 py-4 lg:px-8">
         <Link href="/" className="flex items-center gap-3" aria-label="MSHPOS home">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-500 text-sm font-black text-black/90">M</span>
+          <Image
+            src="/store-assets/mshpos-logo-transparent.png"
+            alt="MSHPOS"
+            width={36}
+            height={36}
+            className="h-9 w-9 rounded-xl object-cover"
+            priority
+          />
           <span className="font-semibold tracking-[0.18em]">MSHPOS</span>
         </Link>
         <nav className="hidden items-center gap-6 text-sm text-slate-300 md:flex" aria-label="Main navigation">
@@ -50,7 +58,7 @@ export function SiteHeader() {
 
 export function SiteFooter() {
   return (
-    <footer className="border-t border-slate-800 bg-black/90 text-slate-400">
+    <footer className="border-t border-slate-800 bg-slate-900 text-slate-400">
       <div className="mx-auto flex max-w-6xl flex-col gap-5 px-5 py-10 text-sm sm:flex-row sm:items-center sm:justify-between lg:px-8">
         <div>
           <p className="font-semibold tracking-[0.18em] text-white">MSHPOS</p>
