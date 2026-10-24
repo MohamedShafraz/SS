@@ -61,25 +61,27 @@ const screens = [
 ] as const;
 
 export function ProductTour() {
-  const [active, setActive] = useState(0);
+  type ScreenId = (typeof screens)[number]["id"];
+  const [activeId, setActiveId] = useState<ScreenId>(screens[0].id);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const screen = screens[active];
+  const activeIndex = Math.max(0, screens.findIndex((item) => item.id === activeId));
+  const screen = screens[activeIndex];
 
-  function select(index: number) {
-    setActive((index + screens.length) % screens.length);
+  function select(id: ScreenId) {
+    setActiveId(id);
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number) {
     if (event.key === "ArrowRight" || event.key === "ArrowDown") {
       event.preventDefault();
       const next = (index + 1) % screens.length;
-      select(next);
+      select(screens[next].id);
       tabRefs.current[next]?.focus();
     }
     if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
       event.preventDefault();
       const previous = (index - 1 + screens.length) % screens.length;
-      select(previous);
+      select(screens[previous].id);
       tabRefs.current[previous]?.focus();
     }
   }
@@ -96,16 +98,16 @@ export function ProductTour() {
         <div className="mt-8 flex gap-2 overflow-x-auto pb-2" role="tablist" aria-label="MSHPOS product screens">
           {screens.map((item, index) => (
             <button
-              aria-controls={`product-tour-panel-${item.id}`}
-              aria-selected={active === index}
-              className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold transition ${active === index ? "border-blue-700 bg-blue-700 text-white" : "border-slate-300 bg-white text-slate-700 hover:border-blue-400 hover:text-blue-700"}`}
+              aria-controls="product-tour-panel"
+              aria-selected={activeId === item.id}
+              className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold transition ${activeId === item.id ? "border-blue-700 bg-blue-700 text-white" : "border-slate-300 bg-white text-slate-700 hover:border-blue-400 hover:text-blue-700"}`}
               id={`product-tour-tab-${item.id}`}
               key={item.id}
-              onClick={() => select(index)}
+              onClick={() => select(item.id)}
               onKeyDown={(event) => handleKeyDown(event, index)}
               ref={(element) => { tabRefs.current[index] = element; }}
               role="tab"
-              tabIndex={active === index ? 0 : -1}
+              tabIndex={activeId === item.id ? 0 : -1}
               type="button"
             >
               {item.label}
@@ -113,10 +115,10 @@ export function ProductTour() {
           ))}
         </div>
 
-        <div className="mt-6 grid gap-8 overflow-hidden rounded-3xl bg-black p-4 text-white shadow-xl lg:grid-cols-[1fr_0.7fr] lg:items-center lg:p-6" id={`product-tour-panel-${screen.id}`} role="tabpanel" aria-labelledby={`product-tour-tab-${screen.id}`}>
+        <div className="mt-6 grid gap-8 overflow-hidden rounded-3xl bg-black/90 p-4 text-white shadow-xl lg:grid-cols-[1fr_0.7fr] lg:items-center lg:p-6" id="product-tour-panel" role="tabpanel" aria-labelledby={`product-tour-tab-${screen.id}`}>
           <div className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-950">
             <div className="relative aspect-video">
-              <Image className="object-contain" src={screen.image} alt={`${screen.label} screen in MSHPOS`} fill sizes="(max-width: 1024px) 100vw, 65vw" priority={active === 0} />
+              <Image className="object-contain" src={screen.image} alt={`${screen.label} screen in MSHPOS`} fill sizes="(max-width: 1024px) 100vw, 65vw" priority={activeIndex === 0} />
             </div>
           </div>
           <div className="px-2 py-4 lg:px-4">

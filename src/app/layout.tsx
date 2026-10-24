@@ -3,6 +3,9 @@ import { GoogleAnalytics } from "@/components/google-analytics";
 import { SiteFooter, SiteHeader } from "@/components/site-header";
 import "./globals.css";
 
+// The CSP nonce is generated per request, so the document must not be statically prerendered.
+export const dynamic = "force-dynamic";
+
 function metadataBase() {
   const value = process.env.NEXT_PUBLIC_SITE_URL?.trim() || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
   try {
