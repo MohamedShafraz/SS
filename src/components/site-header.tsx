@@ -10,7 +10,7 @@ export function StoreLink({ className = "" }: { className?: string }) {
     return <span className={`${className} cursor-not-allowed opacity-60`}>Available soon</span>;
   }
   return (
-    <a className={className} href={href} target="_blank" rel="noreferrer">
+    <a className={className + " text-slate-50"} href={href} target="_blank" rel="noreferrer">
       Microsoft Store <ExternalLinkIcon className="ml-1 inline-block h-4 w-4 align-[-0.15em]" />
     </a>
   );

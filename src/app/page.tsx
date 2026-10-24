@@ -8,7 +8,7 @@ const steps = ["Open the Microsoft Store listing", "Install MSHPOS on Windows", 
 export default function Home() {
   return (
     <main>
-      <section className="overflow-hidden bg-black/85 text-white">
+      <section className="overflow-hidden bg-slate-900 text-white">
         <div className="mx-auto grid max-w-6xl gap-12 px-5 py-16 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:px-8 lg:py-24">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.25em] text-blue-300">MSHPOS / retail software</p>
@@ -30,7 +30,7 @@ export default function Home() {
       <section className="mx-auto max-w-6xl px-5 py-16 lg:px-8 lg:py-24" id="product-options">
         <div className="max-w-2xl"><p className="eyebrow">Choose your path</p><h2 className="section-title">One product idea, two ways to work.</h2></div>
         <div className="mt-10 grid gap-5 lg:grid-cols-2">
-          <article className="rounded-3xl bg-black/90 p-7 text-white"><p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-300">Offline Windows POS</p><h3 className="mt-4 text-3xl font-semibold">Keep the counter dependable.</h3><p className="mt-4 leading-7 text-slate-300">Buy MSHPOS through Microsoft Store, set up your business locally, and keep everyday selling available without cloud synchronization.</p><div className="mt-7"><StoreLink className="rounded-full bg-blue-500 px-5 py-3 font-semibold text-black/90 hover:bg-blue-400" /></div></article>
+          <article className="rounded-3xl bg-slate-900 p-7 text-white"><p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-300">Offline Windows POS</p><h3 className="mt-4 text-3xl font-semibold">Keep the counter dependable.</h3><p className="mt-4 leading-7 text-slate-300">Buy MSHPOS through Microsoft Store, set up your business locally, and keep everyday selling available without cloud synchronization.</p><div className="mt-7"><StoreLink className="rounded-full bg-blue-500 px-5 py-3 font-semibold text-black/90 hover:bg-blue-400" /></div></article>
           <article className="rounded-3xl border border-slate-200 bg-white p-7"><p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-700">Custom online POS</p><h3 className="mt-4 text-3xl font-semibold text-slate-950">Need a hosted workflow?</h3><p className="mt-4 leading-7 text-slate-600">Tell us about your business, branches, and team. We can discuss a custom hosted POS setup and the right operating model for you.</p><div className="mt-7"><a className="inline-flex rounded-full bg-blue-700 px-5 py-3 font-semibold text-white hover:bg-blue-800" href={onlinePosHref()}>Start an enquiry</a></div></article>
         </div>
       </section>
@@ -43,7 +43,7 @@ export default function Home() {
 
       <ProductTour />
 
-      <section className="bg-blue-950 text-white" id="getting-started"><div className="mx-auto max-w-6xl px-5 py-16 lg:px-8 lg:py-24"><div className="max-w-2xl"><p className="eyebrow text-blue-300">Getting started</p><h2 className="mt-3 text-4xl font-semibold tracking-tight text-slate-50 sm:text-4xl">From Store listing to first sale, one clear setup.</h2></div><ol className="mt-10 grid gap-4 md:grid-cols-5">{steps.map((step, index) => <li className="rounded-2xl border border-blue-800 bg-blue-900/60 p-5" key={step}><span className="text-3xl font-semibold text-blue-300">0{index + 1}</span><p className="mt-8 text-sm font-medium leading-6 text-blue-50">{step}</p></li>)}</ol><div className="mt-10"><StoreLink className="rounded-full bg-blue-500 px-5 py-3 font-semibold text-black/90 hover:bg-blue-400" /></div></div></section>
+      <section className="bg-slate-900 text-white" id="getting-started"><div className="mx-auto max-w-6xl px-5 py-16 lg:px-8 lg:py-24"><div className="max-w-2xl"><p className="eyebrow text-blue-300">Getting started</p><h2 className="mt-3 text-4xl font-semibold tracking-tight text-slate-50 sm:text-4xl">From Store listing to first sale, one clear setup.</h2></div><ol className="mt-10 grid gap-4 md:grid-cols-5">{steps.map((step, index) => <li className="rounded-2xl border border-blue-800 bg-blue-900/60 p-5" key={step}><span className="text-3xl font-semibold text-blue-300">0{index + 1}</span><p className="mt-8 text-sm font-medium leading-6 text-blue-50">{step}</p></li>)}</ol><div className="mt-10"><StoreLink className="rounded-full bg-blue-500 px-5 py-3 font-semibold text-black/90 hover:bg-blue-400" /></div></div></section>
 
       <section className="border-t border-slate-200 bg-white" id="online-pos"><div className="mx-auto max-w-6xl px-5 py-16 lg:px-8 lg:py-24"><p className="eyebrow">Online POS enquiry</p><h2 className="section-title max-w-2xl">Tell us what your hosted operation needs.</h2><p className="mt-5 max-w-2xl leading-7 text-slate-600">Share your shop type, number of locations, and the workflow you want to improve. We will reply by email to discuss a custom online POS option.</p><a className="mt-7 inline-flex rounded-full bg-blue-700 px-5 py-3 font-semibold text-white hover:bg-blue-800" href={onlinePosHref()}>Email an enquiry</a><p className="mt-4 text-sm text-slate-500">No account or visitor form is created by this website.</p></div></section>
     </main>
