@@ -115,7 +115,7 @@ export function ProductTour() {
           ))}
         </div>
 
-        <div className="mt-6 grid gap-8 overflow-hidden rounded-3xl bg-black/90 p-4 text-white shadow-xl lg:grid-cols-[1fr_0.7fr] lg:items-center lg:p-6" id="product-tour-panel" role="tabpanel" aria-labelledby={`product-tour-tab-${screen.id}`}>
+        <div className="mt-6 grid gap-8 overflow-hidden rounded-3xl bg-slate-900 p-4 text-white shadow-xl lg:grid-cols-[1fr_0.7fr] lg:items-center lg:p-6" id="product-tour-panel" role="tabpanel" aria-labelledby={`product-tour-tab-${screen.id}`}>
           <div className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-950">
             <div className="relative aspect-video">
               <Image className="object-contain" src={screen.image} alt={`${screen.label} screen in MSHPOS`} fill sizes="(max-width: 1024px) 100vw, 65vw" priority={activeIndex === 0} />
