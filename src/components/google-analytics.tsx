@@ -6,15 +6,26 @@ function measurementId() {
   return value && /^G-[A-Z0-9]+$/i.test(value) ? value : null;
 }
 
+function adsId() {
+  const value = process.env.NEXT_PUBLIC_GOOGLE_ADS_CONVERSION_ID?.trim() || "AW-18441532429";
+  return value && /^AW-\d+$/i.test(value) ? value : null;
+}
+
 export async function GoogleAnalytics() {
-  const id = measurementId();
-  if (!id) return null;
+  const analyticsId = measurementId();
+  const googleAdsId = adsId();
+  const scriptId = analyticsId ?? googleAdsId;
+  if (!scriptId) return null;
   const nonce = (await headers()).get("x-nonce") ?? undefined;
+  const configurations = [analyticsId, googleAdsId]
+    .filter((id): id is string => Boolean(id))
+    .map((id) => `gtag('config', '${id}', { anonymize_ip: true });`)
+    .join("\n");
 
   return (
     <>
       <Script
-        src={`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(id)}`}
+        src={`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(scriptId)}`}
         strategy="afterInteractive"
         nonce={nonce}
       />
@@ -22,7 +33,7 @@ export async function GoogleAnalytics() {
         {`window.dataLayer = window.dataLayer || [];
 function gtag(){window.dataLayer.push(arguments);}
 gtag('js', new Date());
-gtag('config', '${id}', { anonymize_ip: true });`}
+${configurations}`}
       </Script>
     </>
   );

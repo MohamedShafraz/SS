@@ -12,11 +12,11 @@ export function proxy(request: NextRequest) {
   requestHeaders.set("x-nonce", value);
   const production = process.env.NODE_ENV === "production";
   const connect = production
-    ? "connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com https://www.googletagmanager.com"
-    : "connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com https://www.googletagmanager.com ws: wss:";
+    ? "connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com https://googleads.g.doubleclick.net"
+    : "connect-src 'self' https://www.google-analytics.com https://region1.google-analytics.com https://www.googletagmanager.com https://www.googleadservices.com https://www.google.com https://googleads.g.doubleclick.net ws: wss:";
   const evaluation = production ? "" : " 'unsafe-eval'";
   const upgrade = production ? " upgrade-insecure-requests;" : "";
-  const policy = `default-src 'self'; script-src 'self' 'nonce-${value}' https://www.googletagmanager.com${evaluation}; style-src 'self'; img-src 'self' data: blob: https://www.google-analytics.com; font-src 'self'; ${connect}; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self' mailto:; frame-ancestors 'none';${upgrade}`;
+  const policy = `default-src 'self'; script-src 'self' 'nonce-${value}' https://www.googletagmanager.com${evaluation}; style-src 'self'; img-src 'self' data: blob: https://www.google-analytics.com https://www.googleadservices.com https://www.google.com https://googleads.g.doubleclick.net; font-src 'self'; ${connect}; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self' mailto:; frame-ancestors 'none';${upgrade}`;
   // Next.js reads the request policy to add the nonce to generated inline scripts.
   requestHeaders.set("Content-Security-Policy", policy);
   const response = NextResponse.next({ request: { headers: requestHeaders } });
